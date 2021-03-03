@@ -1,7 +1,9 @@
-from calcwave import calcwave
+from calcwave import calcwave as cw
 
 def main(argv = None):
-  calcwave.main()
+  cw.main()
 
 if __name__ == "__main__":
   main()
+ #audiostudio()
+ 
