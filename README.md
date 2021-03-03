@@ -1,5 +1,7 @@
 # calcwave
 A simple cross-platform utility for generating and playing audio using a mathematical formula
+<br>
+
 
 &nbsp;&nbsp;&nbsp;&nbsp;Have you ever looked at a graph in math class and wondered what that would sound like as a sound wave? Well, at least I did... 
 
@@ -41,7 +43,7 @@ You may omit any step where something is already installed.
 * Enjoy! ```python3 <path>/calcwave.py```
 <br>
 
-<br \>
+
 Create any sound you wish, whether it be like music,  
 ```sin(x/(15+round(sin(x/5000))*(x/(30000+sin(x/3000)*100))))```  
 ...or just complete chaos.  
