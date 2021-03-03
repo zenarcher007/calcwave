@@ -24,7 +24,7 @@ You may omit any step where something is already installed.
 * Enjoy! ```python3 <path>/calcwave.py```
 
 #### Windows:
-* Install python3 ```(Software center or elsewhere)```
+* Install python3 ```(Microsoft Store or elsewhere)```
 
 * Install pipwin ```python3 -m pip install pipwin```
 
