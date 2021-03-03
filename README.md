@@ -13,7 +13,7 @@ A simple cross-platform utility for generating and playing audio using a mathema
 Here are installation instructions for each platform.
 You may omit any step where something is already installed.
 
-####Mac:
+#### Mac:
 
 * Install Homebrew ```https://brew.sh```
 
@@ -23,7 +23,7 @@ You may omit any step where something is already installed.
 
 * Enjoy! ```python3 <path>/calcwave.py```
 
-####Windows:
+#### Windows:
 * Install python3 ```(Software center or elsewhere)```
 
 * Install pipwin ```python3 -m pip install pipwin```
@@ -34,7 +34,7 @@ You may omit any step where something is already installed.
 
 * Enjoy! ```python3 <path>/calcwave.py```
 
-####Linux:
+#### Linux:
 * (Fetch updates ```sudo apt-get update```)
 
 * Install python3 ```sudo apt-get install python3```
