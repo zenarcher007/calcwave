@@ -1,5 +1,12 @@
-from calcwave import calcwave as cw
-
 def audiostudio():
-  cw.main()
-
+  try:
+    from calcwave import calcwave as cw
+    cw.main()
+  except ModuleNotFoundError:
+    # Run the dependency wizard
+    from calcwave import dependencyWizard as dWizard
+    dWizard.main()
+    
+    # Try to run calcwave again
+    from calcwave import calcwave as cw
+    cw.main()
