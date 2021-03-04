@@ -1,14 +1,30 @@
 import setuptools
-import sys
 from setuptools import setup
+from setuptools.command.install import install
+import subprocess
+import os
+import sys
 
-cursesModule = ""
-if sys.platform.startswith("win"):
-  cursesModule = "windows-curses"
-else:
-  cursesModule = "curses"
+# Help from https://stackoverflow.com/a/27953695 by 4Z4T4R
+# For Windows, try to install pyaudio through pipwin rather than from pip.
+class installScript(install):
+  def run(self):
+    if not sys.platform.startswith("win"):
+      install.run(self)
+      return
+    try:
+      sys.stderr.write("Attempting to install pyaudio through pipwin...")
+      subprocess.check_output(['python3', '-m', 'pip', 'install', 'pipwin'])
+      subprocess.check_output(['python3', '-m', 'pipwin', 'install', 'pyaudio'])
+      sys.stderr.write("Pyaudio was installed successfully!")
+    except:
+      sys.stderr.write("********* Unable to install pipwin and pyaudio automatically. Here is what I tried. Please install them by commands similar to these:\n")
+      sys.stderr.write("python3 -m pip install pipwin\n")
+      sys.stderr.write("python3 -m pipwin install pyaudio\n")
+      install.run(self)
+      
 
-setup(
+setup(cmdclass={'install': installScript},
   name = 'calcwave',         # How you named your package folder (MyLib)
   packages = ['calcwave'], #setuptools.find_packages(),   # Chose the same as "name"
   version = '1.0.0b4',
