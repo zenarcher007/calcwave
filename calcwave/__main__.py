@@ -6,6 +6,9 @@ def main(argv = None):
     # Run the dependency wizard
     from calcwave import dependencyWizard as dWizard
     dWizard.main()
+    
+    # Run calcwave again:
+    from calcwave import calcwave as cw
     cw.main()
 
 if __name__ == "__main__":

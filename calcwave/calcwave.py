@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.0.0b7"
+version = "1.0.0b8"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)

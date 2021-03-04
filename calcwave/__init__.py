@@ -7,6 +7,6 @@ def audiostudio():
     from calcwave import dependencyWizard as dWizard
     dWizard.main()
     
-    # Try to run calcwave again
+    # Run calcwave again
     from calcwave import calcwave as cw
     cw.main()
