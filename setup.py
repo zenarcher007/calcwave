@@ -21,18 +21,18 @@ class installScript(install):
       sys.stderr.write("********* Unable to install pipwin and pyaudio automatically. Here is what I tried. Please install them by commands similar to these:\n")
       sys.stderr.write("python3 -m pip install pipwin\n")
       sys.stderr.write("python3 -m pipwin install pyaudio\n")
-      install.run(self)
+    install.run(self)
       
 
 setup(cmdclass={'install': installScript},
   name = 'calcwave',         # How you named your package folder (MyLib)
   packages = ['calcwave'], #setuptools.find_packages(),   # Chose the same as "name"
-  version = '1.0.0b4',
+  version = '1.0.0b6',
   license='gpl-3.0',
   description = 'A simple cross-platform utility for generating and playing audio using a mathematical formula ',
   author = 'Justin Douty',                   # Type in your name
   url = 'https://github.com/zenarcher007/calcwave',   # Provide either the link to your github or to your website
-  download_url = 'https://github.com/zenarcher007/calcwave/archive/v1.0.0b4.tar.gz',
+  download_url = 'https://github.com/zenarcher007/calcwave/archive/v1.0.0b6.tar.gz',
   keywords = ['cross-platform', 'audio synthesis', 'terminal'],   # Keywords that define your package best
   install_requires=[
     'pyaudio',
