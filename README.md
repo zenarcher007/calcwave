@@ -14,7 +14,7 @@ Here are installation instructions for each platform.
 You may omit any step where something is already installed.
 
 
-###Install instructions for any platform:
+### Install instructions for any platform:
 * Make sure you have python3 installed
 * Install calcwave: ```python3 -m pip install calcwave```
 * Enjoy! ```python3 -m calcwave``` or ```calcwave```
