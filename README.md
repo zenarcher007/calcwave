@@ -21,6 +21,11 @@ A simple cross-platform utility for generating and playing audio using a mathema
 * Install calcwave: ```python3 -m pip install calcwave```
 * Enjoy! ```python3 -m calcwave``` or ```calcwave```
 
+<br>
+
+<br/>
+Remember to check for updates every so often with:
+```python3 -m pip install -U calcwave```
 
 <br>
 
