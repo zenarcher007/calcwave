@@ -29,10 +29,13 @@ A simple cross-platform utility for generating and playing audio using a mathema
 Create any sound you wish, whether it sounds like music,  
 ```sin(x/(15+round(sin(x/5000))*(x/(30000+sin(x/3000)*100))))```  
 ...or just complete chaos.  
-```sin(0.4*((log(abs(0.001+x))*10000)/500)*sin((log(abs(0.001+x))*10000)/100))```  
+From range 0 to 1,000,000: ```sin(sqrt(x*25000)+sin(x/(15+sqrt(x*0.005%179)))*((sin(x/(10+sqrt(x*10**(3-(x/350
+00%3)))))*10)*(1.5-sqrt(x/1000)%1.5)))```
+ 
 
 Either way, a simple sin wave is a good place to start.
 ```sin(x/30)```
+
 <br>
 
 <br/>
