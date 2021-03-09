@@ -425,55 +425,89 @@ def stopCursesSettings(scr):
   curses.endwin()
 
 
-# A menu item in the format "name=..." that types like an InputPad
-# If this were Java, the methods in here would be an interface.
-class NamedMenuSetting(InputPad): # Extend the InputPad class
-  def __init__(self, ySize, xSize, yStart, xStart, name):
-    super().__init__(ySize, xSize, yStart, xStart)
-    self.name = name
-    self.toolTip = name
-    self.hoverMsg = name
-    self.actionMsg = name
-    self.setText(name + "=")
-    self.lastValue = "0"
-    self.refresh()
-  
-  def setToolTip(self, text):
-    self.toolTip = text
-  def setHoverMsg(self, text):
-    self.hoverMsg = text
-  def setActionMsg(self, text):
-    self.actionMsg = text
-  
-  def setToolTip(self, text):
-    self.toolTip = text
-  
-  def updateValue(self, value):
-    self.setText(self.name + "=" + str(value))
-    self.lastValue = value
+
+
+
+
+# The basic neccesities for the UIManager to accept your widget as a menu item
+class BasicMenuItem:
+  def __init__(self, ySize, xSize, yStart, xStart):
+    self.ySize = ySize
+    self.xSize = xSize
+    self.yStart = yStart
+    self.xStart = xStart
+    self.win = curses.newwin(ySize, xSize, yStart, xStart)
     
-  # All objects that ProgressBar has set to its main window must have a refresh() method
+    self.toolTip = "Tool Tip"
+    self.hoverMsg = "Hover Message"
+    self.actionMsg = "Action Message"
+    
+ # Calls refresh() on the window object
+ # this must be lightweight, as it may be called often.
   def refresh(self):
     self.win.refresh()
-  
-  # Highlights / un-highlights entire window
+    
+  # Redraws the button graphics (text, background, etc.)
+  def updateValue(self, value):
+    pass # This is a hook
+   
+  # Called when UIManager has the cursor over your item
   def highlight(self):
     for row in range(0, self.ySize):
       self.win.chgat(0, row, self.xSize, curses.A_REVERSE)
     curses.use_default_colors()
     self.win.refresh()
   
+  # Called when UIManager tells the cursor to leave your item
   def unhighlight(self):
     for row in range(0, self.ySize):
       self.win.chgat(0, row, self.xSize, curses.A_NORMAL)
     curses.use_default_colors()
     self.win.refresh()
+    
+  # Sets messages displayed in the infoDisplay when selected or activated
+  def setToolTip(self, text):
+    self.toolTip = text
+  def setHoverMsg(self, text):
+    self.hoverMsg = text
+  def setActionMsg(self, text):
+    self.actionMsg = text
+    
+  # Control what happens when you send keyboard presses to it
+  def type(self):
+    pass # This is a hook
+    
+  # What happens when this is activated by pressing enter?
+  def doAction(self):
+    pass # This is a hook
+
+
+
+# A menu item in the format "name=..." that types like an InputPad
+# this allows setting variables, etc in a typing-based way
+# If this were Java, the methods in here would be an interface.
+class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and BasicMenuItem classes
+  def __init__(self, ySize, xSize, yStart, xStart, name):
+    super().__init__(ySize, xSize, yStart, xStart)
+    self.name = name
+    self.setText(name + "=")
+    self.lastValue = "0"
+    self.refresh()
+  
+  def updateValue(self, value):
+    self.setText(self.name + "=" + str(value))
+    self.lastValue = value
+  
+  # Updates the last value first in order to leave the cursor in the right position
+  def unhighlight(self):
+    super().unhighlight()
+    self.updateValue(self.lastValue)
+    self.refresh()
   
   def getValue(self):
     index = len(str(self.name + "="))
     text = self.getText()
     result = text[index:]
-    #self.lastValue = result # Updated in the classes extending this
     return result
   
   # Override InputPad goLeft() method
@@ -544,58 +578,19 @@ class endRangeMenuItem(NamedMenuSetting):
     if (ch >= 48 and ch <= 57) or ch == curses.KEY_BACKSPACE or ch == 127 or ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT or ch == curses.KEY_DC or chr(ch) == '-':
       super().type(ch)
     
+
+    
+
 # A ProgressBar that displays the current position from a start to end value.
-class ProgressBar:
+class ProgressBar(BasicMenuItem):
   def __init__(self, ySize, xSize, yStart, xStart):
-    self.ySize = ySize
-    self.xSize = xSize
-    self.yStart = yStart
-    self.xStart = xStart
-    self.win = curses.newwin(ySize, xSize, yStart, xStart)
+    super().__init__(ySize, xSize, yStart, xStart)
     self.lock = threading.Lock()
-    self.lastValue = 0
     self.progressBarEnabled = True
     self.temporaryPause = False
-    self.lastStart = 0
-    self.lastEnd = 0
-    self.lastValue = 0 # All menu items must have lastValue
-    self.toolTip = "Progress Bar"
-    self.hoverMsg = "Progress Bar"
-    self.actionMsg = "Progress Bar"
-    
-    
-  def setToolTip(self, text):
-    self.toolTip = text
-  def setHoverMsg(self, text):
-    self.hoverMsg = text
-  def setActionMsg(self, text):
-    self.actionMsg = text
-    
-  # All objects that ProgressBar has set to its main window must have a refresh() method
-  def refresh(self):
-    self.win.refresh()
-    
-  # All menu items must have updateValue method
-  def updateValue(self, i):
-    self.updateIndex(i, self.lastStart, self.lastEnd)
+    self.lastValue = 0
   
-    
-  # Highlights / un-highlights entire window
-  def highlight(self):
-    for row in range(0, self.ySize):
-      self.win.chgat(0, row, self.xSize, curses.A_REVERSE)
-    curses.use_default_colors()
-    self.win.refresh()
-  
-  def unhighlight(self):
-    for row in range(0, self.ySize):
-      self.win.chgat(0, row, self.xSize, curses.A_NORMAL)
-    curses.use_default_colors()
-    self.win.refresh()
-  
-  def type(self, ch):
-    pass
-  
+  # Defines action to do when activated
   def doAction(self):
     if self.progressBarEnabled == True:
       self.progressBarEnabled = False
@@ -624,9 +619,6 @@ class ProgressBar:
     value = int(np.interp(i, [start,end], [0, maxLen - 2]))
     if value == self.lastValue:
       return # Don't update again for performance improvements
-    self.lastStart = start
-    self.lastEnd = end
-    self.lastValue = value
     text = "{" + ''.join([char*value for char in '░' ])
     
     # Lock thread
@@ -728,7 +720,7 @@ class UIManager:
     self.settingPads[0].refresh()
     self.settingPads[2].refresh()
     
-  # Retrieves the ProgressBar object so that it can be set to certain values
+  # Retrieves the ProgressBar object
   def getProgressBar(self):
     return self.settingPads[1]
     
@@ -761,8 +753,6 @@ class UIManager:
         self.editing = True
         self.focusedWindow.unhighlight()
         self.infoPad.updateInfo(self.focusedWindow.toolTip)
-        self.focusedWindow.updateValue(self.focusedWindow.lastValue) # Only
-        # to make sure it displays right when entering edit mode
         self.focusedWindow.refresh()
       else:
         self.editing = False
