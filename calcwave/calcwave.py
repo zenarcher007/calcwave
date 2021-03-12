@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.0.0b8"
+version = "1.1.0"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -19,20 +19,33 @@ version = "1.0.0b8"
 # Interactively generates and plays audio from mathematical formulas.
   
 import sys
+import os
 from sys import platform
 import struct
 from math import *
-import numpy as np
-import pyaudio
 import argparse
 import threading
 import time
 
+hasWAVE = False
+try: # wave is only neccesary if you want to export audio files
+  import wave
+  hasWAVE = True
+except:
+  pass
+
+# Decide which imports are neccessary based on arguments
+if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))):
+  import pyaudio # Don't need pyaudio if just exporting audio as a file
+  import numpy as np
+  
 # You will only need curses if using gui mode
-if len(sys.argv) == 1 or sys.argv.count('--gui'):
+if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or sys.argv.count('--export')):
   import curses
   from curses.textpad import Textbox, rectangle
   from curses import wrapper
+  
+  
   
   # To provide compatibility between different operating systems, use different
   # key settings for the corresponding operating system.
@@ -273,7 +286,7 @@ class InputPad:
       self.unHighlight()
       self.insert(0, ch)
       self.goRight()
-      self.win.refresh()
+    self.win.refresh()
 ##################################################################
 
 
@@ -293,136 +306,150 @@ class threadArgs:
 
 
 # Handles GUI
-def windowThread(tArgs, scr, menu):
-  scr.keypad(True)
-  scr.nodelay(True)
-  curses.noecho()
+class windowManager:
+  def __init__(self, tArgs, scr, menu):
+    self.tArgs = tArgs
+    self.scr = scr
+    self.menu = menu
+    
+    self.scr.keypad(True)
+    self.scr.nodelay(True)
+    curses.noecho()
   
-  rows, cols = scr.getmaxyx()
-  lock = threading.Lock()
-  #Initialize input pad
-  # ySize, xSize, yStart, xStart
-  pad = InputPad(rows - 4, cols, 1, 0)
+    rows, cols = self.scr.getmaxyx()
+    #Initialize input pad
+    # ySize, xSize, yStart, xStart
+    self.pad = InputPad(rows - 5, cols, 1, 0)
+    
+    # Tell the menu that this is the main window
+    self.menu.setMainWindow(self.pad.win)
   
-  # Tell the menu that this is the main window
-  menu.setMainWindow(pad.win)
+    #Initialize info display window
+    self.infoPad = InfoDisplay(2, cols, rows - 2, 0)
+    self.infoPad.setMainWindow(self.pad.win) # So it will know
+    # what window to return the cursor to after it updates
   
-  #Initialize info display window
-  infoPad = InfoDisplay(2, cols, rows - 2, 0)
-  infoPad.setMainWindow(pad.win) # So it will know
-  # what window to return the cursor to when it updates
-  
-  menu.setInfoDisplay(infoPad) # Give the menu an infoPad
-  # so it can display its own information on it.
-  
-  # Set the background and text color of the infoPad
-  if curses.has_colors():
-    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    infoPad.win.bkgd(' ', curses.color_pair(1))
+    self.menu.setInfoDisplay(self.infoPad) # Give the menu an infoPad
+    # so it can display its own information on it.
+    
     
   
-  oldTime = 0
-  menuFocus = False
-  settingFocus = False
-  startUp=True
-  try:
-    while tArgs.shutdown is False:
-      #updateInfo(infoWin, pad, scr, "")
-      ch = scr.getch()
-     
-      if ch == 27: # Escape key
-        with lock:
-          infoPad.updateInfo("ESC recieved. Shutting down...")
-          tArgs.shutdown = True
+    # Set the background and text color of the infoPad
+    if curses.has_colors():
+      curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+      self.infoPad.win.bkgd(' ', curses.color_pair(1))
+    
+    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
+    self.thread.start()
+    
+    
+  def windowThread(self, tArgs, scr, menu):
+    lock = threading.Lock()
+    
+    oldTime = 0
+    menuFocus = False
+    settingFocus = False
+    startUp=True
+    
+    try:
+      while self.tArgs.shutdown is False:
+        #updateInfo(infoWin, self.pad, self.scr, "")
+        ch = self.scr.getch()
         
-        
-      # Only runs once
-      if startUp == True:
-        startUp = False
-        menu.refreshSides()
-        pad.refresh()
-        menu.title.refresh()
-      
-      if ch != -1 and ch != 27:
-        
-        # Switch between menu and inputPad with the arrow keys
-        if ch == curses.KEY_UP:
-          menuFocus = False
-          settingFocus = True
+        if ch == 27: # Escape key
           with lock:
-            infoPad.setMainWindow(pad.win)
-            menu.setMainWindow(pad.win)
-            menu.getProgressBar().temporaryPause = False
-            menu.focusedWindow.unhighlight()
-          infoPad.updateInfo("")
-          menu.title.refresh() # Good time to refresh the title?
-        elif ch == curses.KEY_DOWN:
-          menuFocus = True
-          settingFocus = True
-          menu.getProgressBar().temporaryPause = True
-          menu.focusedWindow.highlight()
-          menu.title.refresh()
+            self.infoPad.updateInfo("ESC recieved. Shutting down...")
+            self.tArgs.shutdown = True
+          
+          
+         #Only runs once
+        if startUp == True:
+          startUp = False
+          self.menu.refreshSides()
+          self.pad.refresh()
+          self.menu.title.refresh()
+          
         
-        if menuFocus == True:
-          menu.type(ch)
-        elif settingFocus == False:
-          # Type on the inputPad, verifying each time
-          oldTime = time.time()
-          infoPad.updateInfo("Wait...")
-          with lock:
-            # Don't update the progress bar while typing
-            menu.getProgressBar().temporaryPause = True
-          pad.type(ch)
-        
-          text = pad.getText()
-          infoPad.updateInfo("Verifying...")
-          try: # Verify expression
-            eval('lambda x: ' + text)
-            # TODO: better verification and improved "security"...
+        if ch != -1 and ch != 27:
+          
+          # Switch between menu and inputPad with the arrow keys
+          if ch == curses.KEY_UP:
+            menuFocus = False
+            settingFocus = True
             with lock:
-              tArgs.expression = text # Update the expression for the audioThread
-            infoPad.updateInfo("Playing...")
-          except (SyntaxError, NameError, TypeError) as e:
-            # Highlight problem character
-            if len(e.args) == 2 and len(text) > 0:
-              error = str(e.args[1])
-              parseString = error.split(',', 3)
-              if len(parseString) >= 3:
-                column = int(parseString[2]) - 11
-                x = pad.boxX1+column
-                y = pad.boxY1
-                if x >= pad.boxX1 and y >= pad.boxY1:
-                  xWidth = pad.boxX2 - pad.boxX1+1
-                  pad.highlightChar(column % xWidth, int(column / xWidth))
-              infoPad.updateInfo(str(e.args[0]))
-            else:
-              if len(text) > 0:
-                error = str(e.args)
-                infoPad.updateInfo(error)
+              self.infoPad.setMainWindow(self.pad.win)
+              self.menu.setMainWindow(self.pad.win)
+              self.menu.getProgressBar().temporaryPause = False
+              self.menu.focusedWindow.unhighlight()
+            self.infoPad.updateInfo("")
+            self.menu.title.refresh() # Good time to refresh the title?
+          elif ch == curses.KEY_DOWN:
+            menuFocus = True
+            settingFocus = True
+            self.menu.getProgressBar().temporaryPause = True
+            self.menu.focusedWindow.highlight()
+            self.menu.title.refresh()
+          
+          if menuFocus == True:
+            self.menu.type(ch)
+          elif settingFocus == False:
+            # Type on the inputPad, verifying each time
+            oldTime = time.time()
+            self.infoPad.updateInfo("Wait...")
+            with lock:
+              # Don't update the progress bar while typing
+              self.menu.getProgressBar().temporaryPause = True
+            self.pad.type(ch)
+          
+            text = self.pad.getText()
+            self.infoPad.updateInfo("Verifying...")
+            try: # Verify expression
+              eval('lambda x: ' + text)
+              # TODO: better verification and improved "security"...
+              with lock:
+                self.tArgs.expression = text # Update the expression for the audioThread
+              self.infoPad.updateInfo("Playing...")
+            except (SyntaxError, NameError, TypeError) as e:
+              # Highlight problem character
+              if len(e.args) == 2 and len(text) > 0:
+                error = str(e.args[1])
+                parseString = error.split(',', 3)
+                if len(parseString) >= 3:
+                  column = int(parseString[2]) - 11
+                  x = self.pad.boxX1+column
+                  y = self.pad.boxY1
+                  if x >= self.pad.boxX1 and y >= self.pad.boxY1:
+                    xWidth = self.pad.boxX2 - self.pad.boxX1+1
+                    self.pad.highlightChar(column % xWidth, int(column / xWidth))
+                self.infoPad.updateInfo(str(e.args[0]))
               else:
-                tArgs.expression = "0"
-                infoPad.updateInfo("")
-          with lock:
-            menu.getProgressBar().temporaryPause = False
-        settingFocus = False
+                if len(text) > 0:
+                  error = str(e.args)
+                  self.infoPad.updateInfo(error)
+                else:
+                  self.tArgs.expression = "0"
+                  self.infoPad.updateInfo("")
+            with lock:
+              self.menu.getProgressBar().temporaryPause = False
+          settingFocus = False
       else:
-        # Improve typing performance, but save CPU when not typing
-        if time.time() - oldTime > 0.5:
-          time.sleep(0.1)
-        
-  except (KeyboardInterrupt, SystemExit):
-    pass
-  finally:
-    sys.stderr.write("Shutting down GUI...\n")
-    stopCursesSettings(scr)
-    tArgs.shutdown = True
-    
-# Changes curses settings back in order to restore terminal state
-def stopCursesSettings(scr):
-  curses.echo()
-  curses.nocbreak()
-  scr.keypad(False)
-  curses.endwin()
+          # Improve typing performance, but save CPU when not typing
+          if time.time() - oldTime > 0.5:
+            time.sleep(0.1)
+          
+    except (KeyboardInterrupt, SystemExit):
+      pass
+    finally:
+      sys.stderr.write("Shutting down GUI...\n")
+      self.stopCursesSettings(self.scr)
+      self.tArgs.shutdown = True
+      
+  # Changes curses settings back in order to restore terminal state
+  def stopCursesSettings(self, scr):
+    curses.echo()
+    curses.nocbreak()
+    scr.keypad(False)
+    curses.endwin()
 
 
 
@@ -477,15 +504,115 @@ class BasicMenuItem:
   def type(self):
     pass # This is a hook
     
+  # Called when entering edit mode on the item
+  def onBeginEdit(self):
+    pass # This is a hook
+    
   # What happens when this is activated by pressing enter?
   def doAction(self):
     pass # This is a hook
 
 
+# A button to export audio as a WAV file, assuming you have wave installed.
+class saveButton(InputPad, BasicMenuItem):
+  def __init__(self, ySize, xSize, yStart, xStart, tArgs, progressBar):
+    super().__init__(ySize, xSize, yStart, xStart)
+    self.tArgs = tArgs
+    self.infoPad = None
+    self.progressBar = progressBar
+    self.lock = threading.Lock()
+    self.setText("Export Audio")
+    self.refresh()
+  
+  def updateValue(self, text):
+    self.setText(text)
+    
+  def onBeginEdit(self):
+      self.setText("") # Clear and allow you to enter the filename
+    
+  def setInfoDisplay(self, infoPad):
+    self.infoPad = infoPad
+    
+  def unhighlight(self):
+    super().unhighlight()
+    self.setText("Export Audio")
+    
+  #TODO: Override type, make it check filenames live
+  def type(self, ch):
+    super().type(ch)
+    name = self.getText()
+    path = os.getcwd()
+    fullPath = path + "/" + name + ".wav"
+    if os.path.exists(fullPath):
+      self.infoPad.updateInfo("Will overwrite " + fullPath)
+    else:
+      self.infoPad.updateInfo(self.toolTip)
+  
+  # Where it actually saves the file
+  def doAction(self):
+    if not hasWAVE:
+      return
+    name = self.getText()
+    if name == "":
+      self.setActionMsg("Cancelled.")
+      self.setText("Export Audio")
+      return
+    self.setText("Export Audio")
+    path = os.getcwd()
+    fullPath = path + "/" + name + ".wav"
+    self.setActionMsg("Saving file as " + fullPath)
+    
+    with self.lock:
+      self.progressBar.temporaryPause = False
+    if(self.infoPad):
+      self.infoPad.updateInfo("Writing...")
+    
+    # Do in a separate thread?
+    thread = threading.Thread(target=exportAudio, args=(fullPath, self.tArgs, self.progressBar, self.infoPad), daemon = True)
+    thread.start()
+    #exportAudio(fullPath)
+    
+    
+# Exports audio to a wav file, optionally showing progress on the infoPad if specified
+def exportAudio(fullPath, tArgs, progressBar, infoPad):
+  oldTime = time.time()
+  with wave.open(fullPath, 'w') as f:
+    f.setnchannels(tArgs.channels)
+    f.setsampwidth(2)
+    f.setframerate(tArgs.rate)
+    x = 0
+    exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767")
+    # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
+    
+    for i in range(tArgs.start, tArgs.end, 1):
+      try:
+        value = int(exp_as_func(i))
+      except:
+        pass
+        
+      if value > 32767:
+        value = 32767
+      elif value < -32767:
+        value = -32767
+        
+      f.writeframesraw( bytes(struct.pack('<h', value)) )
+      
+      newTime = time.time()
+      
+      if newTime - oldTime > 1 and infoPad and progressBar:
+        oldTime = newTime
+        with self.lock:
+          progressBar.temporaryPause = True
+          #self.progressBar.updateIndex(i, self.tArgs.start, self.tArgs.end)
+          infoPad.updateInfo("Writing (" + str(int((i-self.tArgs.start)/(self.tArgs.end-self.tArgs.start)*100)) + "%)...")
+          progressBar.temporaryPause = False
+  if infoPad:
+    infoPad.updateInfo("Exported as " + fullPath)
+    
+
 
 # A menu item in the format "name=..." that types like an InputPad
 # this allows setting variables, etc in a typing-based way
-# If this were Java, the methods in here would be an interface.
 class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and BasicMenuItem classes
   def __init__(self, ySize, xSize, yStart, xStart, name):
     super().__init__(ySize, xSize, yStart, xStart)
@@ -667,23 +794,35 @@ class UIManager:
     self.title = TitleWindow(1, xSize, 0, 0)
     
     # Create three windows, side-by-side, two of which are inputPads and are stored in
-    # the settingPads list
-    startWin = startRangeMenuItem(ySize, self.boxWidth, yStart, xStart, "beg", tArgs)
+    # the settingPads lists
+    
+    startWin = startRangeMenuItem(int(ySize/2), self.boxWidth, yStart, xStart, "beg", tArgs)
     startWin.setHoverMsg("Press enter to change the start range.")
     startWin.setToolTip("Setting start range... Press enter to apply.")
     startWin.setActionMsg("Start range changed!")
     startWin.updateValue(tArgs.start)
     
-    progressWin = ProgressBar(ySize, self.boxWidth, yStart, xStart + self.boxWidth)
+    progressWin = ProgressBar(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth)
     progressWin.setHoverMsg("Press enter to change the progress bar settings")
     progressWin.setToolTip("Press enter to toggle the progress bar on or off.")
     progressWin.setActionMsg("Progress bar visibility toggled!")
     
-    endWin = endRangeMenuItem(ySize, self.boxWidth, yStart, xStart + self.boxWidth * 2, "end", tArgs)
+    endWin = endRangeMenuItem(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth * 2, "end", tArgs)
     endWin.setHoverMsg("Press enter to change the end range.")
     endWin.setToolTip("Setting end range... Press enter to apply.")
     endWin.setActionMsg("End range changed!")
     endWin.updateValue(tArgs.end)
+    
+    # This currently takes up the width of the screen. Change the value from xSize to resize it
+    saveWin = saveButton(int(ySize/2), xSize, yStart+1, xStart, tArgs, progressWin)
+    saveWin.setHoverMsg("Press enter to save a recording as a WAV file.")
+    if hasWAVE:
+      saveWin.setToolTip("Please enter filename, and press enter to save. Any existing file will be overwritten.")
+      saveWin.setActionMsg("File saved in same directory!")
+    else:
+      saveWin.setToolTip("You do not have the wave module installed. Please install it with \"python3 -m pip install wave\", and restart calcwave.")
+      saveWin.setActionMsg("Unable to save file. The wave module is not installed.")
+    
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -692,6 +831,7 @@ class UIManager:
     self.settingPads.append(startWin)
     self.settingPads.append(progressWin)
     self.settingPads.append(endWin)
+    self.settingPads.append(saveWin)
     
     self.focusedWindow = startWin
     self.focusedWindowIndex = 0
@@ -711,14 +851,17 @@ class UIManager:
   # Set the infoPad in order for it to display information
   def setInfoDisplay(self, infoPad):
     self.infoPad = infoPad
+    self.settingPads[3].setInfoDisplay(infoPad) # Give to saveButton
   
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
   def refreshSides(self):
-    self.settingPads[0].updateValue(self.tArgs.start) #.setText("beg=" + str(self.tArgs.start))
-    self.settingPads[2].updateValue(self.tArgs.end) #.setText("end=" + str(self.tArgs.end))
+    self.settingPads[0].updateValue(self.tArgs.start)
+    self.settingPads[2].updateValue(self.tArgs.end)
     self.settingPads[0].refresh()
     self.settingPads[2].refresh()
+    self.settingPads[3].updateValue("Export Audio")
+    self.settingPads[3].refresh()
     
   # Retrieves the ProgressBar object
   def getProgressBar(self):
@@ -753,6 +896,7 @@ class UIManager:
         self.editing = True
         self.focusedWindow.unhighlight()
         self.infoPad.updateInfo(self.focusedWindow.toolTip)
+        self.focusedWindow.onBeginEdit()
         self.focusedWindow.refresh()
       else:
         self.editing = False
@@ -904,6 +1048,8 @@ def main(argv = None):
                       help = "The lower range of x to start from.")
   parser.add_argument("-e", "--end", type = int, default = 100000,
                       help = "The upper range of x to end at.")
+  parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
+                      help = "Export to specified file as wav and exit")
   parser.add_argument("--channels", type = int, default = 1,
                       help = "The number of audio channels to use")
   parser.add_argument("--rate", type = int, default = 44100,
@@ -920,6 +1066,9 @@ def main(argv = None):
   # information about how to play sound and act
   tArgs = threadArgs()
   
+  isGuiArgument = False
+  isExportArgument = False
+  isExpressionProvided = False
   args = None
   if len(sys.argv) > 1:
     args = parser.parse_args() #Parse arguments
@@ -930,12 +1079,17 @@ def main(argv = None):
     tArgs.channels = args.channels
     tArgs.rate = args.rate
     tArgs.frameSize = args.buffer
+    
+    isExportArgument = args.export != ""
+    isGuiArgument = args.gui
+    isExpressionProvided = args.expression != ""
   
   window = None
   scr = None
   menu = None
   #The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
-  if len(sys.argv) == 1 or args.gui == True: #If no arguments are supplied - GUI
+  if len(sys.argv) == 1 or not(isGuiArgument or isExportArgument or isExpressionProvided):
+    #If no arguments are supplied - GUI
     sys.stderr.write("Starting GUI mode\n")
     tArgs.isGUI = True
     
@@ -947,10 +1101,9 @@ def main(argv = None):
       curses.use_default_colors()
     
     # ySize, xSize, yStart, xStart
-    menu = UIManager(1, cols, rows - 3, 0, tArgs)
+    menu = UIManager(2, cols, rows - 4, 0, tArgs)
     #Start the GUI input thread
-    window = threading.Thread(target=windowThread, args=(tArgs, scr, menu), daemon=True)
-    window.start()
+    window = windowManager(tArgs, scr, menu)
     
     tArgs.expression = "0" # Default value
   else:
@@ -962,14 +1115,22 @@ def main(argv = None):
   #audio = threading.Thread(target=audioThread, args=(tArgs,), daemon=False)
   #audio.start()
   
-  # Keep in mind that menu will be None when it is not in GUI mode...
-  audioThread(tArgs, menu)
+  if len(sys.argv) >= 1 and isExportArgument:
+    if hasWAVE == False:
+      print("You do not have the wave module installed! Please install it with python3 -m pip install wave")
+    else:
+      #fullPath, tArgs, progressBar, infoPad
+      exportAudio(args.export, tArgs, None, None)
+  else:
+    # Keep in mind that menu will be None when it is not in GUI mode...
+    audioThread(tArgs, menu)
+  
   
   # When that exits
   tArgs.shutdown = True
   
   if window:
-    window.join()
+    window.thread.join()
     
 
 if __name__ == "__main__":
