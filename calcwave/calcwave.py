@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.1.0"
+version = "1.1.1"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -306,7 +306,7 @@ class threadArgs:
 
 
 # Handles GUI
-class windowManager:
+class WindowManager:
   def __init__(self, tArgs, scr, menu):
     self.tArgs = tArgs
     self.scr = scr
@@ -432,7 +432,7 @@ class windowManager:
             with lock:
               self.menu.getProgressBar().temporaryPause = False
           settingFocus = False
-      else:
+        else:
           # Improve typing performance, but save CPU when not typing
           if time.time() - oldTime > 0.5:
             time.sleep(0.1)
@@ -1103,7 +1103,7 @@ def main(argv = None):
     # ySize, xSize, yStart, xStart
     menu = UIManager(2, cols, rows - 4, 0, tArgs)
     #Start the GUI input thread
-    window = windowManager(tArgs, scr, menu)
+    window = WindowManager(tArgs, scr, menu)
     
     tArgs.expression = "0" # Default value
   else:
