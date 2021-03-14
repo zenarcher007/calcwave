@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.1.1"
+version = "1.2.0"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -356,6 +356,7 @@ class WindowManager:
         #updateInfo(infoWin, self.pad, self.scr, "")
         ch = self.scr.getch()
         
+        
         if ch == 27: # Escape key
           with lock:
             self.infoPad.updateInfo("ESC recieved. Shutting down...")
@@ -371,7 +372,8 @@ class WindowManager:
           
         
         if ch != -1 and ch != 27:
-          
+          oldTime = time.time()
+
           # Switch between menu and inputPad with the arrow keys
           if ch == curses.KEY_UP:
             menuFocus = False
@@ -388,13 +390,14 @@ class WindowManager:
             settingFocus = True
             self.menu.getProgressBar().temporaryPause = True
             self.menu.focusedWindow.highlight()
-            self.menu.title.refresh()
+            if self.menu.editing:
+              self.menu.focusedWindow.onBeginEdit()
+            self.menu.refreshTitleMessage()
           
           if menuFocus == True:
             self.menu.type(ch)
           elif settingFocus == False:
             # Type on the inputPad, verifying each time
-            oldTime = time.time()
             self.infoPad.updateInfo("Wait...")
             with lock:
               # Don't update the progress bar while typing
@@ -468,6 +471,7 @@ class BasicMenuItem:
     self.toolTip = "Tool Tip"
     self.hoverMsg = "Hover Message"
     self.actionMsg = "Action Message"
+    self.displayName = ""
     
  # Calls refresh() on the window object
  # this must be lightweight, as it may be called often.
@@ -499,9 +503,11 @@ class BasicMenuItem:
     self.hoverMsg = text
   def setActionMsg(self, text):
     self.actionMsg = text
+  def setDisplayName(self, text):
+    self.displayName = text
     
   # Control what happens when you send keyboard presses to it
-  def type(self):
+  def type(self, ch):
     pass # This is a hook
     
   # Called when entering edit mode on the item
@@ -534,8 +540,8 @@ class saveButton(InputPad, BasicMenuItem):
     self.infoPad = infoPad
     
   def unhighlight(self):
-    super().unhighlight()
     self.setText("Export Audio")
+    super().unhighlight()
     
   #TODO: Override type, make it check filenames live
   def type(self, ch):
@@ -575,6 +581,7 @@ class saveButton(InputPad, BasicMenuItem):
     
 # Exports audio to a wav file, optionally showing progress on the infoPad if specified
 def exportAudio(fullPath, tArgs, progressBar, infoPad):
+  lock = threading.Lock()
   oldTime = time.time()
   with wave.open(fullPath, 'w') as f:
     f.setnchannels(tArgs.channels)
@@ -601,10 +608,9 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
       
       if newTime - oldTime > 1 and infoPad and progressBar:
         oldTime = newTime
-        with self.lock:
+        with lock:
           progressBar.temporaryPause = True
-          #self.progressBar.updateIndex(i, self.tArgs.start, self.tArgs.end)
-          infoPad.updateInfo("Writing (" + str(int((i-self.tArgs.start)/(self.tArgs.end-self.tArgs.start)*100)) + "%)...")
+          infoPad.updateInfo("Writing (" + str(int((i-tArgs.start)/(tArgs.end-tArgs.start)*100)) + "%)...")
           progressBar.temporaryPause = False
   if infoPad:
     infoPad.updateInfo("Exported as " + fullPath)
@@ -700,52 +706,130 @@ class endRangeMenuItem(NamedMenuSetting):
       
   
   # Override NamedMenuSetting type method
-  def type(self,ch):
+  def type(self, ch):
     # Only allow these keys
     if (ch >= 48 and ch <= 57) or ch == curses.KEY_BACKSPACE or ch == 127 or ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT or ch == curses.KEY_DC or chr(ch) == '-':
       super().type(ch)
     
-
+    
+    
+    
     
 
-# A ProgressBar that displays the current position from a start to end value.
+# A ProgressBar that displays the current position of AudioPlayer's range
 class ProgressBar(BasicMenuItem):
-  def __init__(self, ySize, xSize, yStart, xStart):
+  def __init__(self, ySize, xSize, yStart, xStart, audioClass, tArgs):
     super().__init__(ySize, xSize, yStart, xStart)
     self.lock = threading.Lock()
+    self.audioClass = audioClass
     self.progressBarEnabled = True
     self.temporaryPause = False
-    self.lastValue = 0
+    self.tArgs = tArgs
+    
+    
+    # Start progress bar thread
+    self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
+    self.progressThread.start()
+    
+  def highlight(self):
+    self.temporaryPause = True
+    super().highlight()
+    
+  def unhighlight(self):
+    self.temporaryPause = False
+    super().unhighlight()
+    
+  def type(self, ch):
+    with self.lock:
+      self.temporaryPause = False
+    # Handle left/right stepping
+    if ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT:
+      range = abs(self.tArgs.end - self.tArgs.start)
+      blockWidth = int(range / self.xSize)
+      # Use bigger increments if not paused
+      if self.audioClass.paused == False:
+        blockWidth = blockWidth * 5
+      
+      with self.lock:
+        index = self.audioClass.index
+        
+      if ch == curses.KEY_LEFT:
+        index = index - blockWidth
+      elif ch == curses.KEY_RIGHT:
+        index = index + blockWidth
+      # Limit between acceptable range
+      if index < self.tArgs.start:
+        index = self.tArgs.start
+      elif index > self.tArgs.end:
+        index = self.tArgs.end
+      # Write back to AudioPlayer
+      with self.lock:
+        self.audioClass.index = index
+      self.updateIndex(index, self.tArgs.start, self.tArgs.end)
+      
+    if ch == 32: # Space
+      with self.lock:
+        self.audioClass.setPaused(not(self.audioClass.paused))
+        
+    if chr(ch) == 'v' or chr(ch) == 'V':
+      self.toggleVisibility()
   
   # Defines action to do when activated
   def doAction(self):
+    pass
+  
+  
+  # Toggles progress bar visibility
+  def toggleVisibility(self):
     if self.progressBarEnabled == True:
-      self.progressBarEnabled = False
-      self.actionMsg = "Progress bar visibility turned off!"
+      with self.lock:
+        self.progressBarEnabled = False
+      #self.actionMsg = "Progress bar visibility turned off!"
       # Set progress bar text full of '-'
       text = ''.join([char*(self.xSize-1) for char in '-' ])
     else:
-      self.progressBarEnabled = True
+      with self.lock:
+        self.progressBarEnabled = True
       text = ''.join([char*(self.xSize-1) for char in '░' ])
-      self.actionMsg = "Progress bar visibility turned on!"
+      #self.actionMsg = "Progress bar visibility turned on!"
     self.win.erase()
     self.win.addstr(0, 0, text)
     self.win.refresh()
+    if self.otherWindow: # Preserve cursor position
+      self.otherWindow.refresh()
       
   
   # You can tell it what window to return the cursor
   # to after updating
   def setMainWindow(self, window):
     self.otherWindow = window
+    
+  def progressThread(self, tArgs, audioClass):
+    index = 0
+    while self.tArgs.shutdown == False:
+    # Update menu index display
+      time.sleep(0.5)
+      with self.lock:
+        pause = self.temporaryPause
+      if self.tArgs.shutdown == False and self.progressBarEnabled and pause == False:
+        with self.lock:
+          index = audioClass.index
+        self.updateIndex(index, tArgs.start, tArgs.end)
+      
+      # Display blank while not playing anything
+      if self.tArgs.expression == "0" and self.progressBarEnabled == True:
+        self.toggleVisibility()
+        while self.tArgs.expression == "0":
+          time.sleep(0.2)
+        self.toggleVisibility()
   
   # Displays the current x-value as a progress bar
   def updateIndex(self, i, start, end):
-    if self.progressBarEnabled == False or self.temporaryPause:
+    if self.progressBarEnabled == False:
       return
     maxLen = self.xSize * self.ySize
     value = int(np.interp(i, [start,end], [0, maxLen - 2]))
-    if value == self.lastValue:
-      return # Don't update again for performance improvements
+    
     text = "{" + ''.join([char*value for char in '░' ])
     
     # Lock thread
@@ -769,7 +853,16 @@ class TitleWindow:
   
   # Draws the title and highlights it
   def refresh(self):
+    self.win.clear()
     self.win.addstr("Calcwave v" + version)
+    self.win.chgat(0, 0, self.xSize, curses.A_REVERSE)
+    curses.use_default_colors()
+    self.win.refresh()
+    
+  # Use curstom text
+  def customTitle(self, text):
+    self.win.clear()
+    self.win.addstr(text)
     self.win.chgat(0, 0, self.xSize, curses.A_REVERSE)
     curses.use_default_colors()
     self.win.refresh()
@@ -779,7 +872,7 @@ class TitleWindow:
 # Drive UIManager's type(ch) function with keyboard characters
 # to interact with it when needed.
 class UIManager:
-  def __init__(self, ySize, xSize, yStart, xStart, tArgs):
+  def __init__(self, ySize, xSize, yStart, xStart, tArgs, audioClass):
     #self.ySize = ySize
     #self.xSize = xSize
     #self.yStart = yStart
@@ -800,17 +893,21 @@ class UIManager:
     startWin.setHoverMsg("Press enter to change the start range.")
     startWin.setToolTip("Setting start range... Press enter to apply.")
     startWin.setActionMsg("Start range changed!")
+    startWin.setDisplayName("Start Value")
     startWin.updateValue(tArgs.start)
     
-    progressWin = ProgressBar(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth)
+    progressWin = ProgressBar(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth, audioClass, tArgs)
     progressWin.setHoverMsg("Press enter to change the progress bar settings")
-    progressWin.setToolTip("Press enter to toggle the progress bar on or off.")
-    progressWin.setActionMsg("Progress bar visibility toggled!")
+    progressWin.setToolTip("V- toggle visibility, Left/Right Arrows- move back and forth, Space- pause/play")
+    progressWin.setActionMsg("Done editing.")
+    progressWin.setDisplayName("Progress Bar")
     
     endWin = endRangeMenuItem(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth * 2, "end", tArgs)
     endWin.setHoverMsg("Press enter to change the end range.")
     endWin.setToolTip("Setting end range... Press enter to apply.")
     endWin.setActionMsg("End range changed!")
+    endWin.setDisplayName("End Value")
+    
     endWin.updateValue(tArgs.end)
     
     # This currently takes up the width of the screen. Change the value from xSize to resize it
@@ -822,7 +919,7 @@ class UIManager:
     else:
       saveWin.setToolTip("You do not have the wave module installed. Please install it with \"python3 -m pip install wave\", and restart calcwave.")
       saveWin.setActionMsg("Unable to save file. The wave module is not installed.")
-    
+    saveWin.setDisplayName("Export Button")
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -867,6 +964,15 @@ class UIManager:
   def getProgressBar(self):
     return self.settingPads[1]
     
+  # Refreshes title message based on editing status
+  def refreshTitleMessage(self):
+    if self.editing:
+      if self.focusedWindow.displayName != "":
+          self.title.customTitle("Editing " + self.focusedWindow.displayName)
+    else:
+      self.title.refresh()
+      
+    
   # Handles typing and switching between items
   def type(self, ch):
     # Switch between menu items
@@ -896,14 +1002,16 @@ class UIManager:
         self.editing = True
         self.focusedWindow.unhighlight()
         self.infoPad.updateInfo(self.focusedWindow.toolTip)
+        self.refreshTitleMessage()
         self.focusedWindow.onBeginEdit()
         self.focusedWindow.refresh()
       else:
         self.editing = False
-        self.focusedWindow.highlight()
         # Run action specified in class
         self.focusedWindow.doAction()
+        self.focusedWindow.highlight()
         self.infoPad.updateInfo(self.focusedWindow.actionMsg)
+        self.refreshTitleMessage()
       return
       
     # Drive the type function
@@ -950,87 +1058,106 @@ class InfoDisplay:
 
 
 #Thread generating and playing audio
-def audioThread(tArgs, menu):
-  p = pyaudio.PyAudio()
-  stream = p.open(format=pyaudio.paFloat32,
-                  channels = tArgs.channels,
-                  rate = tArgs.rate,
-                  output = True,
-                  frames_per_buffer = tArgs.frameSize)
-  
-  value = 0.0
-  oldTime = 0
-  
-  #Thanks to https://stackoverflow.com/a/12467755 by Ohad
-  #for a much more efficient eval() for performance improvements
-  
-  try: # Don't error-out on an empty text box
-    exp_as_func = eval('lambda x: ' + tArgs.expression)
-  except SyntaxError:
-    sys.stderr.write("Expression has not yet been set, or other SyntaxError\n")
-    pass
+class AudioPlayer:
+  def __init__(self, tArgs):
+    self.tArgs = tArgs
+    self.index = 0
+    self.paused = False
     
+  def play(self):
+    self.audioThread(self.tArgs,)
+  
+  # Set this to True to pause
+  def setPaused(self, paused):
+    self.paused = paused
     
-  try: #Make breaking out of the infinate loop possible by a keyboard interrupt
-    #exp_as_func = eval('lambda x: ' + tArgs.expression)
-    while tArgs.shutdown is False: # Main loop
-      result = []
-      if abs(tArgs.end - tArgs.start < tArgs.frameSize) or tArgs.end <= tArgs.start:
-        sys.stdout.write("Error: Invalid range!")
-        tArgs.shutdown = True
-        break
-        
-      for i in range(tArgs.start, tArgs.end, 1):
-        try:
-          if tArgs.expression:
-            value = exp_as_func(i) # This is where the waveform values are actually calculated
-          else:
-            value = 0
-        except:
-          pass
-        
-        if not(isinstance(value, float)):
-          value = 0
-        
-        # Limit to prevent going over the system-set volume level
-        if value > 1:
-          value = 1
-        elif value < -1:
-          value = -1
+  def audioThread(self, tArgs):
+    p = pyaudio.PyAudio()
+    stream = p.open(format=pyaudio.paFloat32,
+                    channels = tArgs.channels,
+                    rate = tArgs.rate,
+                    output = True,
+                    frames_per_buffer = tArgs.frameSize)
+    
+    value = 0.0
+    oldTime = 0
+    
+    #Thanks to https://stackoverflow.com/a/12467755 by Ohad
+    #for a much more efficient eval() for performance improvements
+    
+    try: # Don't error-out on an empty text box
+      exp_as_func = eval('lambda x: ' + tArgs.expression)
+    except SyntaxError:
+      sys.stderr.write("Expression has not yet been set, or other SyntaxError\n")
+      pass
+      
+      
+    try: #Make breaking out of the infinate loop possible by a keyboard interrupt
+      #exp_as_func = eval('lambda x: ' + tArgs.expression)
+      while tArgs.shutdown is False: # Main loop
+        result = []
+        if abs(tArgs.end - tArgs.start < tArgs.frameSize) or tArgs.end <= tArgs.start:
+          sys.stdout.write("Error: Invalid range!")
+          tArgs.shutdown = True
+          break
+        if tArgs.shutdown:
+          break
           
-        result.append(value)
-        
-        if i % tArgs.frameSize == 0 or i == 0:
-          if tArgs.shutdown == True:
-            sys.exit()
-          try: # Set the new expression for next time
-            exp_as_func = eval('lambda x: ' + tArgs.expression)
+        #for self.index in range(tArgs.start, tArgs.end, 1):
+        while self.index <= tArgs.end: # Loop over range
+          try:
+            if tArgs.expression:
+              value = exp_as_func(self.index) # This is where the waveform values are actually calculated
+            else:
+              value = 0
           except:
             pass
-          chunk = np.array(result)
-          try: # This try statement may not be needed if better verification is made beforehand...
-            stream.write( chunk.astype(np.float32).tobytes() )
-          except TypeError:
-            time.sleep(0.5)
-          result = []
-          # Update menu index display
-          t = time.time()
-          if menu and t - oldTime > 0.5: # Don't update too fast
-            oldTime = t
-            if tArgs.shutdown == False:
-              menu.getProgressBar().updateIndex(i, tArgs.start, tArgs.end)
           
-          if i < tArgs.start or i > tArgs.end:
+          if not(isinstance(value, float)):
+            value = 0
+          
+          # Limit to prevent going over the system-set volume level
+          if value > 1:
+            value = 1
+          elif value < -1:
+            value = -1
+            
+          result.append(value)
+          
+          if self.index % tArgs.frameSize == 0 or self.index == 0:
+            if tArgs.shutdown == True:
+              sys.exit()
+            try: # Set the new expression for next time
+              exp_as_func = eval('lambda x: ' + tArgs.expression)
+            except:
+              pass
+            chunk = np.array(result)
+            try: # This try statement may not be needed if better verification is made beforehand...
+              stream.write( chunk.astype(np.float32).tobytes() )
+            except TypeError:
+              time.sleep(0.5)
+            result = []
+          
+          if tArgs.shutdown:
             break
-      
-  except (KeyboardInterrupt, SystemExit):
-    pass
-  finally:
-    tArgs.shutdown = True
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    sys.stderr.write("Audio thread shut down.\n")
+          
+          while self.paused == True or (tArgs.expression == "0" and tArgs.shutdown == False):
+            # Wait to become unpaused
+            time.sleep(0.2)
+            if tArgs.shutdown == True:
+              self.paused = False
+          
+          self.index = self.index + 1
+          
+        self.index = self.tArgs.start
+    except (KeyboardInterrupt, SystemExit):
+      pass
+    finally:
+      tArgs.shutdown = True
+      stream.stop_stream()
+      stream.close()
+      p.terminate()
+      sys.stderr.write("Audio player shut down.\n")
     
 
 
@@ -1040,7 +1167,7 @@ def audioThread(tArgs, menu):
 
 def main(argv = None):
   
-  parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing with sound waves through mathematical expressions", prog="calcwave")
+  parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
   
   parser.add_argument('expression', type = str,
                       help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, use 0 for this parimeter")
@@ -1083,6 +1210,9 @@ def main(argv = None):
     isExportArgument = args.export != ""
     isGuiArgument = args.gui
     isExpressionProvided = args.expression != ""
+    
+  # Initialize AudioPlayer
+  audioClass = AudioPlayer(tArgs)
   
   window = None
   scr = None
@@ -1101,7 +1231,7 @@ def main(argv = None):
       curses.use_default_colors()
     
     # ySize, xSize, yStart, xStart
-    menu = UIManager(2, cols, rows - 4, 0, tArgs)
+    menu = UIManager(2, cols, rows - 4, 0, tArgs, audioClass)
     #Start the GUI input thread
     window = WindowManager(tArgs, scr, menu)
     
@@ -1112,7 +1242,7 @@ def main(argv = None):
     
     
   #Start the audio player thread
-  #audio = threading.Thread(target=audioThread, args=(tArgs,), daemon=False)
+  #audio = threading.Thread(target=audioClass, args=(tArgs,), daemon=False)
   #audio.start()
   
   if len(sys.argv) >= 1 and isExportArgument:
@@ -1123,7 +1253,7 @@ def main(argv = None):
       exportAudio(args.export, tArgs, None, None)
   else:
     # Keep in mind that menu will be None when it is not in GUI mode...
-    audioThread(tArgs, menu)
+    audioClass.play()
   
   
   # When that exits
