@@ -34,6 +34,15 @@ try: # wave is only neccesary if you want to export audio files
 except:
   pass
 
+
+# Supress SyntaxWarning from Math module
+import warnings
+warnings.filterwarnings(
+    action='ignore',
+    category=SyntaxWarning,
+    module=r'math'
+)
+
 # Decide which imports are neccessary based on arguments
 if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))):
   import pyaudio # Don't need pyaudio if just exporting audio as a file
