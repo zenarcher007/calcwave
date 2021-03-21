@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.0"
+version = "1.2.2"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -26,13 +26,7 @@ from math import *
 import argparse
 import threading
 import time
-
-hasWAVE = False
-try: # wave is only neccesary if you want to export audio files
-  import wave
-  hasWAVE = True
-except:
-  pass
+import wave
 
 
 # Supress SyntaxWarning from Math module
@@ -40,7 +34,7 @@ import warnings
 warnings.filterwarnings(
     action='ignore',
     category=SyntaxWarning,
-    module=r'math'
+    #module=r'math'
 )
 
 # Decide which imports are neccessary based on arguments
@@ -415,6 +409,7 @@ class WindowManager:
           
             text = self.pad.getText()
             self.infoPad.updateInfo("Verifying...")
+          
             try: # Verify expression
               eval('lambda x: ' + text)
               # TODO: better verification and improved "security"...
@@ -441,6 +436,7 @@ class WindowManager:
                 else:
                   self.tArgs.expression = "0"
                   self.infoPad.updateInfo("")
+                    
             with lock:
               self.menu.getProgressBar().temporaryPause = False
           settingFocus = False
@@ -565,8 +561,6 @@ class saveButton(InputPad, BasicMenuItem):
   
   # Where it actually saves the file
   def doAction(self):
-    if not hasWAVE:
-      return
     name = self.getText()
     if name == "":
       self.setActionMsg("Cancelled.")
@@ -922,12 +916,9 @@ class UIManager:
     # This currently takes up the width of the screen. Change the value from xSize to resize it
     saveWin = saveButton(int(ySize/2), xSize, yStart+1, xStart, tArgs, progressWin)
     saveWin.setHoverMsg("Press enter to save a recording as a WAV file.")
-    if hasWAVE:
-      saveWin.setToolTip("Please enter filename, and press enter to save. Any existing file will be overwritten.")
-      saveWin.setActionMsg("File saved in same directory!")
-    else:
-      saveWin.setToolTip("You do not have the wave module installed. Please install it with \"python3 -m pip install wave\", and restart calcwave.")
-      saveWin.setActionMsg("Unable to save file. The wave module is not installed.")
+    saveWin.setToolTip("Please enter filename, and press enter to save. Any existing file will be overwritten.")
+    saveWin.setActionMsg("File saved in same directory!")
+    
     saveWin.setDisplayName("Export Button")
 
     if curses.has_colors():
@@ -1255,11 +1246,7 @@ def main(argv = None):
   #audio.start()
   
   if len(sys.argv) >= 1 and isExportArgument:
-    if hasWAVE == False:
-      print("You do not have the wave module installed! Please install it with python3 -m pip install wave")
-    else:
-      #fullPath, tArgs, progressBar, infoPad
-      exportAudio(args.export, tArgs, None, None)
+    exportAudio(args.export, tArgs, None, None)
   else:
     # Keep in mind that menu will be None when it is not in GUI mode...
     audioClass.play()
