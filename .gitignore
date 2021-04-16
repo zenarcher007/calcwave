@@ -1,9 +1,4 @@
-LICENSE.txt
 .DS_Store
-README.md
 build/
 dist/
-setup.cfg
-pyproject.toml
 calcwave.egg-info/
-Manual Install Instructions.md
