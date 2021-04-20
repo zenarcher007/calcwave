@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.3"
+version = "1.2.4"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -325,6 +325,7 @@ class WindowManager:
     # ySize, xSize, yStart, xStart
     self.pad = InputPad(rows - 5, cols, 1, 0)
     
+    
     # Tell the menu that this is the main window
     self.menu.setMainWindow(self.pad.win)
   
@@ -336,7 +337,6 @@ class WindowManager:
     self.menu.setInfoDisplay(self.infoPad) # Give the menu an infoPad
     # so it can display its own information on it.
     
-    
   
     # Set the background and text color of the infoPad
     if curses.has_colors():
@@ -345,7 +345,7 @@ class WindowManager:
     
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
     self.thread.start()
-    
+    self.pad.setText(tArgs.expression)
     
   def windowThread(self, tArgs, scr, menu):
     lock = threading.Lock()
@@ -368,7 +368,7 @@ class WindowManager:
             break
           
           
-         #Only runs once
+        # Only runs once
         if startUp == True:
           startUp = False
           self.menu.refreshAll()
@@ -555,23 +555,50 @@ class saveButton(InputPad, BasicMenuItem):
   def type(self, ch):
     super().type(ch)
     name = self.getText()
-    path = os.getcwd()
-    fullPath = path + "/" + name + ".wav"
-    if os.path.exists(fullPath):
+    if name == '':
+      self.infoPad.updateInfo(self.toolTip)
+      return
+    
+    # Update the infoDisplay
+    fullPath = ''
+    if '/' in name:
+      # Use absolute specified path
+      fullPath = name + ".wav"
+      parDir = '/'.join(fullPath.split('/')[0:-1])
+      try:
+        if parDir != '' and not os.path.isdir(parDir):
+          self.infoPad.updateInfo("Invalid directory \"" + parDir + "\"")
+          return
+      except PermissionError:
+        self.infoPad.updateInfo("Permission denied: " + parDir)
+    else:
+      path = os.getcwd()
+      fullPath = path + "/" + name + ".wav"
+      
+    if os.path.isfile(fullPath):
       self.infoPad.updateInfo("Will overwrite " + fullPath)
     else:
-      self.infoPad.updateInfo(self.toolTip)
+      self.infoPad.updateInfo("Will export as " + fullPath)
   
   # Where it actually saves the file
   def doAction(self):
     name = self.getText()
-    if name == "":
+    if name == '':
       self.setActionMsg("Cancelled.")
       self.setText("Export Audio")
       return
     self.setText("Export Audio")
-    path = os.getcwd()
-    fullPath = path + "/" + name + ".wav"
+    path = ''
+    if '/' in name:
+      fullPath = name + ".wav"
+      parDir = '/'.join(fullPath.split('/')[0:-1])
+      if not os.path.isdir(parDir):
+        self.setActionMsg("Cannot export audio: invalid path \"" + fullPath + "\"")
+        self.setText("Export Audio")
+        return
+    else:
+      path = os.getcwd()
+      fullPath = path + "/" + name + ".wav"
     self.setActionMsg("Saving file as " + fullPath)
     
     with self.lock:
@@ -597,7 +624,24 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
     exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767")
     # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
     
-    for i in range(tArgs.start, tArgs.end, 1):
+    # Cache values to prevent changes while writing
+    step = tArgs.step
+    start = tArgs.start
+    end = tArgs.end
+    value = 0
+    
+    i=0
+    progressStart = 0 # The point the progress display will start from, so it doesn't go backwards
+    # Support negative (backwards) step
+    if step < 0:
+      i = end
+      progressStart = end
+    elif step > 0:
+      i = start
+      progressStart = start
+    elif step == 0:
+      raise(ValueError("Step value cannot be zero!"))
+    while i <= end and i >= start: # Python's range() does not support using floats as step value
       try:
         value = int(exp_as_func(i))
       except:
@@ -616,8 +660,9 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
         oldTime = newTime
         with lock:
           progressBar.temporaryPause = True
-          infoPad.updateInfo("Writing (" + str(int((i-tArgs.start)/(tArgs.end-tArgs.start)*100)) + "%)...")
+          infoPad.updateInfo("Writing (" + str(int(abs(i-progressStart)/(abs(end-start))*100)) + "%)...")
           progressBar.temporaryPause = False
+      i = i + step
   if infoPad:
     infoPad.updateInfo("Exported as " + fullPath)
     
@@ -738,7 +783,7 @@ class endRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if value < self.tArgs.end: # Don't allow crossing start / end ranges
+      if value < self.tArgs.start: # Don't allow crossing start / end ranges
         self.actionMsg = "End range cannot be less than start range!"
         self.updateValue(self.tArgs.end)
       else:
@@ -762,7 +807,7 @@ class stepMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      self.actionMsg = "Step amount changed to " + str(value) + ". Note: baud rate is at " + str(self.tArgs.rate) + "hz."
+      self.actionMsg = "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.tArgs.rate) + "hz."
       self.updateValue(value)
       self.lastValue = str(value)
       with self.lock:
@@ -999,7 +1044,7 @@ class UIManager:
     self.focusedWindow = startWin
     self.focusedWindowIndex = 0
     self.editing = False
-    
+      
     self.refreshAll()
     # End of constructor
     
@@ -1047,8 +1092,10 @@ class UIManager:
         self.editing = False
         self.focusedWindow.highlight()
         self.infoPad.updateInfo("Cancelled editing!")
+        self.focusedWindow.highlight()
         self.refreshTitleMessage()
-      else:
+        return
+      else: # Not editing? Interpret as shut down
         with self.lock:
           self.infoPad.updateInfo("ESC recieved. Shutting down...")
           self.tArgs.shutdown = True
@@ -1078,7 +1125,7 @@ class UIManager:
     if ch == curses.KEY_ENTER:
       if self.editing == False:
         self.editing = True
-        self.focusedWindow.unhighlight()
+        self.focusedWindow.unhighlight() # Call the focused item's basic functions
         self.infoPad.updateInfo(self.focusedWindow.toolTip)
         self.refreshTitleMessage()
         self.focusedWindow.onBeginEdit()
@@ -1261,7 +1308,7 @@ def main(argv = None):
   parser.add_argument("-e", "--end", type = int, default = 100000,
                       help = "The upper range of x to end at.")
   parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
-                      help = "Export to specified file as wav and exit")
+                      help = "Export to specified file as wav. File extension is automatically added.")
   parser.add_argument("--channels", type = int, default = 1,
                       help = "The number of audio channels to use")
   parser.add_argument("--rate", type = int, default = 44100,
@@ -1302,9 +1349,12 @@ def main(argv = None):
   window = None
   scr = None
   menu = None
+  
   #The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
-  if len(sys.argv) == 1 or not(isGuiArgument or isExportArgument or isExpressionProvided):
+  if len(sys.argv) == 1 or isGuiArgument or not(isExportArgument or isExpressionProvided):
     #If no arguments are supplied - GUI
+    if isExpressionProvided:
+      tArgs.expression = args.expression
     sys.stderr.write("Starting GUI mode\n")
     tArgs.isGUI = True
     
