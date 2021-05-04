@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.4"
+version = "1.2.5"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -28,6 +28,10 @@ import threading
 import time
 import wave
 
+try:
+  from calcwave.macros import *
+except ModuleNotFoundError:
+  print("Failed to import macros. The use of macros will be disabled.")
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -1121,26 +1125,39 @@ class UIManager:
       
     self.setMainWindow(self.focusedWindow)
     
+    
+    
+    # Function macro to begin edting
+    def beginEdit():
+      self.editing = True
+      self.focusedWindow.unhighlight() # Call the focused item's basic functions
+      self.infoPad.updateInfo(self.focusedWindow.toolTip)
+      self.refreshTitleMessage()
+      self.focusedWindow.onBeginEdit()
+      self.focusedWindow.refresh()
+      
+    # Function macro to end editing
+    def endEdit():
+      self.editing = False
+      # Run action specified in class
+      self.focusedWindow.doAction()
+      self.focusedWindow.highlight()
+      self.infoPad.updateInfo(self.focusedWindow.actionMsg)
+      self.refreshTitleMessage()
+    
     # Toggle editing on and off and handle highlighting
     if ch == curses.KEY_ENTER:
       if self.editing == False:
-        self.editing = True
-        self.focusedWindow.unhighlight() # Call the focused item's basic functions
-        self.infoPad.updateInfo(self.focusedWindow.toolTip)
-        self.refreshTitleMessage()
-        self.focusedWindow.onBeginEdit()
-        self.focusedWindow.refresh()
+        beginEdit()
       else:
-        self.editing = False
-        # Run action specified in class
-        self.focusedWindow.doAction()
-        self.focusedWindow.highlight()
-        self.infoPad.updateInfo(self.focusedWindow.actionMsg)
-        self.refreshTitleMessage()
+        endEdit()
       return
+      
       
     # Drive the type function
     if not (ch == curses.KEY_UP or ch == curses.KEY_DOWN):
+      if self.editing == False:
+        beginEdit() # Begin editing automatically
       self.focusedWindow.type(ch)
     elif self.editing:
       self.infoPad.updateInfo(self.focusedWindow.toolTip)
@@ -1148,6 +1165,7 @@ class UIManager:
       self.infoPad.updateInfo(self.focusedWindow.hoverMsg)
 
     
+
 
 # The display at the bottom of the screen that shows status
 # and error messages
