@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.5"
+version = "1.2.6"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -22,16 +22,13 @@ import sys
 import os
 from sys import platform
 import struct
-from math import *
+import math
+from random import random
 import argparse
 import threading
 import time
 import wave
 
-try:
-  from calcwave.macros import *
-except ModuleNotFoundError:
-  print("Failed to import macros. The use of macros will be disabled.")
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -42,8 +39,9 @@ warnings.filterwarnings(
 )
 
 # Decide which imports are neccessary based on arguments
-if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))):
-  import pyaudio # Don't need pyaudio if just exporting audio as a file
+if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))): 
+  # Don't need pyaudio if just exporting audio as a file
+  import pyaudio
   import numpy as np
   
 # You will only need curses if using gui mode
@@ -73,6 +71,8 @@ if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or
   else:
     sys.stderr.write("Warning: unsupported platform, \"" + str(pform) + "\"\n")
     # Use default curses key definitions; doesn't change them
+
+
 
 
 # A special window that allows typing through characters provided in the type(ch)
@@ -310,6 +310,18 @@ class threadArgs:
     self.isGUI = False
     self.shutdown = False
     self.step = 1. # How much to increment x
+    self.functionTable = self.getFunctionTable()
+    
+  # Define functions available to eval here.
+  def getFunctionTable(self):
+    functionsDict = vars(math)
+ 
+    # Returns a random number between -1 and 1. Can be used to generate fuzz noises.
+    def rand():
+      return random() * 2 - 1
+    functionsDict["rand"] = rand
+ 
+    return functionsDict
 
 
 
@@ -417,8 +429,7 @@ class WindowManager:
             self.infoPad.updateInfo("Verifying...")
           
             try: # Verify expression
-              eval('lambda x: ' + text)
-              # TODO: better verification and improved "security"...
+              eval('lambda x: ' + text, tArgs.functionTable)
               with lock:
                 self.tArgs.expression = text # Update the expression for the audioThread
               self.infoPad.updateInfo("Playing...")
@@ -625,7 +636,7 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
     f.setsampwidth(2)
     f.setframerate(tArgs.rate)
     x = 0
-    exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767")
+    exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
     # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
     
     # Cache values to prevent changes while writing
@@ -1230,7 +1241,7 @@ class AudioPlayer:
     #for a much more efficient eval() for performance improvements
     
     try: # Don't error-out on an empty text box
-      exp_as_func = eval('lambda x: ' + tArgs.expression)
+      exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
     except SyntaxError:
       sys.stderr.write("Expression has not yet been set, or other SyntaxError\n")
       pass
@@ -1257,6 +1268,7 @@ class AudioPlayer:
               value = 0
           except:
             pass
+            
           
           if not(isinstance(value, float)):
             value = 0
@@ -1274,7 +1286,7 @@ class AudioPlayer:
             if tArgs.shutdown == True:
               sys.exit()
             try: # Set the new expression for next time
-              exp_as_func = eval('lambda x: ' + tArgs.expression)
+              exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
             except:
               pass
             chunk = np.array(result)
