@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.6"
+version = "1.2.7"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -197,8 +197,11 @@ class InputPad:
     text = ""
     for row in range(0, self.ySize):
       self.curPos(0, row)
-      text = text + self.win.instr().decode("utf-8").replace(' ', '')
+      # Remove spaces (which make up the blank space of the curses window)
+      text = text + self.win.instr().decode("utf-8").replace(chr(32), '')
     self.curPos(oldPosX, oldPosY)
+    # Replace the space placeholder character back with spaces
+    text = text.replace(chr(2063), chr(32))
     return text
   
   # Checks if there is an empty slot at the given position
@@ -1405,10 +1408,6 @@ def main(argv = None):
     tArgs.isGUI = False
     
     
-    
-  #Start the audio player thread
-  #audio = threading.Thread(target=audioClass, args=(tArgs,), daemon=False)
-  #audio.start()
   
   if len(sys.argv) >= 1 and isExportArgument:
     exportAudio(args.export, tArgs, None, None)
