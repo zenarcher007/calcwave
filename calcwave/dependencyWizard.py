@@ -6,7 +6,8 @@ import shutil
 # I had too much trouble getting pyaudio to install as
 # a dependency to calcwave, due to it needing portaudio. I decided to
 # make it try to install the required packages at runtime instead if needed.
-
+# If you decide to fork this repo, don't forget to change the links to your github
+# page in this file.
 # Runs a command. Prints the failMsg and exits if it fails.
 def runCmdWithFailMsg(command, failMsg):
   try:
@@ -102,8 +103,8 @@ def installPyaudio_linux():
   elif text == 'y':
     
     for cmd in installCmds:
-      runCmdWithFailMsg(cmd, "DependencyWizard: Error invoking " + ' '.join(cmd) + ". Please install portaudio manually, and run calcwave again. Please open an issue about this on github: https://github.com/zenarcher007/calcwave")
-    runCmdWithFailMsg(['python3', '-m', 'pip', 'install', 'pyaudio'], "DependencyWizard: Error invoking \"python3 -m pip install pyaudio\". Please install \"portaudio\" through your package manager, and run calcwave again. Please open an issue about ths on github: https://github.com/zenarcher007/calcwave")
+      runCmdWithFailMsg(cmd, "DependencyWizard: Error invoking " + ' '.join(cmd) + ". Please install portaudio manually, and run calcwave again. Feel free to open an issue about this on github: https://github.com/zenarcher007/calcwave")
+    runCmdWithFailMsg(['python3', '-m', 'pip', 'install', 'pyaudio'], "DependencyWizard: Error invoking \"python3 -m pip install pyaudio\". Please install \"portaudio\" through your package manager, and run calcwave again. Feel free to open an issue about ths on github: https://github.com/zenarcher007/calcwave")
   else:
     sys.stderr.write("I'm not sure what you mean by \"" + text + "\". Quitting.\n")
     sys.exit(1)
@@ -123,7 +124,7 @@ def main(argv = None):
     elif "linux" in pform:
       installPyaudio_linux()
     else:
-      sys.stderr.write("Sorry, DependencyWizard does not support your operating system. Please install pyaudio and/or portaudio manually.")
+      sys.stderr.write("DependencyWizard was unable to dermine your type of operating system. (sys.platform=" + pform +"). Please install pyaudio and/or portaudio manually, and open an issue about this on github: https://github.com/zenarcher007/calcwave")
     sys.stderr.write("DependencyWizard completed sucessfully!\n")
       
   
