@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.7"
+version = "1.2.8"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -62,10 +62,9 @@ if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or
     curses.KEY_DC = 330
     curses.KEY_ENTER = 10
   elif "linux" in pform:
-    pass # Defaults seem to work fine on linux??
     #curses.KEY_BACKSPACE = 127
     #curses.KEY_DC = 126
-    #curses.KEY_ENTER = 10
+    curses.KEY_ENTER = 10 # Was 343 when tested on Linux Mint (Debian)
   elif "win" in pform:
     curses.KEY_BACKSPACE = 8
   else:
