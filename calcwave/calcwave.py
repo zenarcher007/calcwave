@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.8"
+version = "1.2.9"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -37,7 +37,8 @@ warnings.filterwarnings(
     category=SyntaxWarning,
     #module=r'math'
 )
-
+global useVirtualCursor
+useVirtualCursor = False
 # Decide which imports are neccessary based on arguments
 if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))): 
   # Don't need pyaudio if just exporting audio as a file
@@ -67,6 +68,8 @@ if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or
     curses.KEY_ENTER = 10 # Was 343 when tested on Linux Mint (Debian)
   elif "win" in pform:
     curses.KEY_BACKSPACE = 8
+    curses.KEY_ENTER = 10
+    useVirtualCursor = True
   else:
     sys.stderr.write("Warning: unsupported platform, \"" + str(pform) + "\"\n")
     # Use default curses key definitions; doesn't change them
@@ -80,11 +83,18 @@ if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or
 # it doesn't allow new lines. It is more like a string editor.
 class InputPad:
   #Constructor
-  def __init__(self, ySize, xSize, yStart, xStart): # xStart, yStart, xSize, ySize):
+  def __init__(self, ySize, xSize, yStart, xStart, virtual_cursor = None): # xStart, yStart, xSize, ySize):
     #Define window boundaries
     self.xSize = xSize
     self.ySize = ySize
-    
+    if virtual_cursor:
+      self.isVirtualCursorEnabled = virtual_cursor
+    elif 'useVirtualCursor' in globals(): # Default to global setting
+      self.isVirtualCursorEnabled = useVirtualCursor
+    else: # Default to False
+      self.isVirtualCursorEnabled = False
+    if virtual_cursor: # Make the real cursor invisible
+      curses.curs_set(0)
     #These hold the actual x and y positions
     #of the bounds of the pad
     #Upper left corner
@@ -102,21 +112,26 @@ class InputPad:
     
     self.oldHighlightX = 0
     self.oldHighlightY = 0
+    self.oldVCursor = (self.boxX1, self.boxY1)
     self.highlighted = False
     
-  #Moves the cursor relatively if space permits and updates the screen
+  # Moves the cursor relatively if space permits and updates the screen
   def curMove(self, relX, relY):
-    if self.checkBounds(self.curX + relX, self.curY + relY):
+    if self.checkBounds(self.curX + relX, self.curY + relY, move_virtual = True):
       self.win.move(self.curY + relY, self.curX + relX)
       self.curY = self.curY + relY
       self.curX = self.curX + relX
+      if move_virtual:
+        self.virtCurMove(x=self.curX, y=self.curY)
   
   # Sets absolute cursor position
-  def curPos(self, x, y):
+  def curPos(self, x, y, move_virtual = True):
     self.curX = x
     self.curY = y
-    self.win.move(self.curY, self.curX)
-  #def checkCharacter(self, x, y):
+    self.win.move(y, x)
+    if move_virtual:
+      self.virtCurMove(x = x, y = y)
+      
     
   # Calls a window refresh
   def refresh(self):
@@ -220,7 +235,11 @@ class InputPad:
       self.win.chgat(self.oldHighlightY, self.oldHighlightX, 1, curses.A_NORMAL)
       
   # Highlights a character at a position.
-  def highlightChar(self, x, y):
+  def highlightChar(self, x=-1, y=-1):
+    if x == -1 or y == -1:
+      return
+    #print("HIGHLIGHT " + str(x) + ", " + str(y))
+    #time.sleep(0.5)
     if curses.has_colors():
       self.highlighted = True
       oldCurX = self.curX
@@ -234,7 +253,42 @@ class InputPad:
       # Add new color at position
       self.win.chgat(y, x, 1, curses.A_UNDERLINE)
       curses.use_default_colors()
-      self.curPos(oldCurX, oldCurY)
+      self.curPos(oldCurX, oldCurY, move_virtual = False)
+  
+  
+  
+  # Moves the virtual cursor to the specified x, y position, if it is enabled.
+  def virtCurMove(self, x=-1, y=-1):
+    if x == -1 or y == -1:
+      return
+    if not(self.isVirtualCursorEnabled) or (x,y) is self.oldVCursor:
+      return
+    oldX, oldY = self.oldVCursor
+    
+    # Check if character is reversed (https://stackoverflow.com/a/26797300/16386050):
+    attrs = self.win.inch(oldY, oldX) #[y, x])
+    isHighlighted = bool(attrs & curses.A_REVERSE)
+    
+    if isHighlighted and self.checkBounds(oldX, oldY):
+      self.win.chgat(oldY, oldX, 1, curses.A_NORMAL)
+    self.oldVCursor=(x,y)
+    if not(isHighlighted or self.checkEmpty(x, y)):
+      self.win.chgat(y, x, 1, curses.A_REVERSE)
+    
+    self.win.move(y, x) # Move the cursor back
+    #self.refresh()
+    
+    
+    
+  def virtCurMoveOld(self, x=-1, y=-1):
+    #print("HIGHLIGHTING")
+    #time.sleep(0.5)
+    #self.highlightChar(x, y)
+    pass
+    #print("DONE HIGHLIGHTING")
+    #time.sleep(0.5)
+    
+    
       
   # Erases everything and sets the pad's text to text, with the cursor at the end
   def setText(self, text):
