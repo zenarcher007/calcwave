@@ -44,3 +44,14 @@ Either way, a simple sin wave is a good place to start.
 
 <br/>
 Optionally, you may also use Calcwave in terminal mode, or specify extra options upon starting the GUI. Use ./calcwave -h for help. Please open an issue in Github if you experience any bugs or operating system incompatibilities, and feel free to contribute to Calcwave's development if you wish!
+
+<br>
+
+<br/>  
+
+#### TODO:  
+* Make the text input class allow scrolling past its bounds on the screen
+* Substitution rule-based syntax for expression
+    * Options for manipulating surround sound balance on each of these rules?
+    * Add a full text editor (which allows newlines) below the main expression
+* Saving and loading sessions
