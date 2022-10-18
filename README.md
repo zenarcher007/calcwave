@@ -52,6 +52,6 @@ Optionally, you may also use Calcwave in terminal mode, or specify extra options
 #### TODO:  
 * Make the text input class allow scrolling past its bounds on the screen
 * Substitution rule-based syntax for expression
-    * Options for manipulating surround sound balance on each of these rules?
     * Add a full text editor (which allows newlines) below the main expression
 * Saving and loading sessions
+* Python binary detection in DependencyWizard
