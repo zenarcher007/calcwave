@@ -50,6 +50,7 @@ Optionally, you may also use Calcwave in terminal mode, or specify extra options
 <br/>  
 
 #### TODO:  
+* Waveform graphing
 * Make the text input class allow scrolling past its bounds on the screen
 * Substitution rule-based syntax for expression
     * Add a full text editor (which allows newlines) below the main expression
