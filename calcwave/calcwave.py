@@ -28,6 +28,7 @@ import argparse
 import threading
 import time
 import wave
+import gc
 
 
 # Supress SyntaxWarning from Math module
@@ -41,16 +42,19 @@ global useVirtualCursor
 useVirtualCursor = False
 # Decide which imports are neccessary based on arguments
 if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))): 
-  # Don't need pyaudio if just exporting audio as a file
+  # Don't need pyaudio if just exporting audio as a file - only because this is a bit hard to install
   import pyaudio
   import numpy as np
+  #import matplotlib.pylab as plt
+  #import matplotlib
+  #from matplotlib import pyplot as plt
+  import matplotlib.pyplot as plt
   
 # You will only need curses if using gui mode
 if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or sys.argv.count('--export')):
   import curses
   from curses.textpad import Textbox, rectangle
   from curses import wrapper
-  
   
   
   # To provide compatibility between different operating systems, use different
@@ -113,7 +117,7 @@ class InputPad:
     self.oldHighlightX = 0
     self.oldHighlightY = 0
     self.oldVCursor = (self.boxX1, self.boxY1)
-    self.highlighted = False
+    self.onHoverEntered = False
     
   # Moves the cursor relatively if space permits and updates the screen
   def curMove(self, relX, relY):
@@ -228,25 +232,25 @@ class InputPad:
       return False
       
   
-  # Un-highlights the last highlighted character.
+  # Un-onHoverEnters the last onHoverEntered character.
   def unHighlight(self):
-    if self.highlighted == True:
-      self.highlighted = False
+    if self.onHoverEntered == True:
+      self.onHoverEntered = False
       self.win.chgat(self.oldHighlightY, self.oldHighlightX, 1, curses.A_NORMAL)
       
   # Highlights a character at a position.
-  def highlightChar(self, x=-1, y=-1):
+  def onHoverEnterChar(self, x=-1, y=-1):
     if x == -1 or y == -1:
       return
     #print("HIGHLIGHT " + str(x) + ", " + str(y))
     #time.sleep(0.5)
     if curses.has_colors():
-      self.highlighted = True
+      self.onHoverEntered = True
       oldCurX = self.curX
       oldCurY = self.curY
       
       self.unHighlight()
-      self.highlighted = True
+      self.onHoverEntered = True
       self.oldHighlightX = x
       self.oldHighlightY = y
       
@@ -283,7 +287,7 @@ class InputPad:
   def virtCurMoveOld(self, x=-1, y=-1):
     #print("HIGHLIGHTING")
     #time.sleep(0.5)
-    #self.highlightChar(x, y)
+    #self.onHoverEnterChar(x, y)
     pass
     #print("DONE HIGHLIGHTING")
     #time.sleep(0.5)
@@ -414,7 +418,7 @@ class WindowManager:
     if curses.has_colors():
       curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
       self.infoPad.win.bkgd(' ', curses.color_pair(1))
-    
+
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
     self.thread.start()
     self.pad.setText(tArgs.expression)
@@ -426,7 +430,6 @@ class WindowManager:
     menuFocus = False
     settingFocus = False
     startUp=True
-    
     try:
       while self.tArgs.shutdown is False:
         #updateInfo(infoWin, self.pad, self.scr, "")
@@ -452,21 +455,21 @@ class WindowManager:
           oldTime = time.time()
 
           # Switch between menu and inputPad with the arrow keys
-          if ch == curses.KEY_UP:
+          if ch == curses.KEY_UP and not self.menu.editing: # Don't remove focus from the menu while it's editing
             menuFocus = False
             settingFocus = True
             with lock:
               self.infoPad.setMainWindow(self.pad.win)
               self.menu.setMainWindow(self.pad.win)
               self.menu.getProgressBar().temporaryPause = False
-              self.menu.focusedWindow.unhighlight()
+              self.menu.focusedWindow.onHoverLeave()
             self.infoPad.updateInfo("")
             self.menu.title.refresh() # Good time to refresh the title?
             self.pad.refresh() # Set cursor back to typing pad
           elif ch == curses.KEY_DOWN:
             menuFocus = True
             settingFocus = True
-            self.menu.focusedWindow.highlight()
+            self.menu.focusedWindow.onHoverEnter()
             if self.menu.editing:
               self.menu.focusedWindow.onBeginEdit()
             self.menu.refreshTitleMessage()
@@ -477,7 +480,7 @@ class WindowManager:
             # Type on the inputPad, verifying each time
             self.infoPad.updateInfo("Wait...")
             with lock:
-              # Don't update the progress bar while typing
+              # Don't update the progress bar while typing. This helps a problem where the terminal cursor may sporadically jump (wrongly) to the progess bar.
               self.menu.getProgressBar().temporaryPause = True
             self.pad.type(ch)
           
@@ -500,7 +503,7 @@ class WindowManager:
                   y = self.pad.boxY1
                   if x >= self.pad.boxX1 and y >= self.pad.boxY1:
                     xWidth = self.pad.boxX2 - self.pad.boxX1+1
-                    self.pad.highlightChar(column % xWidth, int(column / xWidth))
+                    self.pad.onHoverEnterChar(column % xWidth, int(column / xWidth))
                 self.infoPad.updateInfo(str(e.args[0]))
               else:
                 if len(text) > 0:
@@ -546,44 +549,56 @@ class BasicMenuItem:
     self.xStart = xStart
     self.win = curses.newwin(ySize, xSize, yStart, xStart)
     
-    self.toolTip = "Tool Tip"
-    self.hoverMsg = "Hover Message"
-    self.actionMsg = "Action Message"
-    self.displayName = ""
+    #self.toolTip = "Tool Tip"
+    #self.hoverMsg = "Hover Message"
+    #self.actionMsg = "Action Message"
     self.refresh()
     
+  # What should I (UIManager) call you?
+  def getDisplayName(self):
+   return "BasicMenuItem"
+
  # Calls refresh() on the window object
  # this must be lightweight, as it may be called often.
   def refresh(self):
     self.win.refresh()
     
+  def displayText(self, text):
+    self.win.erase()
+    self.win.addstr(0, 0, text)
+    self.win.refresh()
+
+  def isOneshot(self):
+    return False # By default, this item can enter and exit focus, rather than immediately exiting.
+
   # Redraws the button graphics (text, background, etc.)
   def updateValue(self, value):
     pass # This is a hook
    
   # Called when UIManager has the cursor over your item
-  def highlight(self):
+  def onHoverEnter(self):
     for row in range(0, self.ySize):
       self.win.chgat(0, row, self.xSize, curses.A_REVERSE)
     curses.use_default_colors()
     self.win.refresh()
+    return "Hover Message"
   
   # Called when UIManager tells the cursor to leave your item
-  def unhighlight(self):
+  def onHoverLeave(self):
     for row in range(0, self.ySize):
       self.win.chgat(0, row, self.xSize, curses.A_NORMAL)
     curses.use_default_colors()
     self.win.refresh()
     
   # Sets messages displayed in the infoDisplay when selected or activated
-  def setToolTip(self, text):
-    self.toolTip = text
-  def setHoverMsg(self, text):
-    self.hoverMsg = text
-  def setActionMsg(self, text):
-    self.actionMsg = text
-  def setDisplayName(self, text):
-    self.displayName = text
+ #def setToolTip(self, text):
+ #   self.toolTip = text
+ # def setHoverMsg(self, text):
+ #   self.hoverMsg = text
+ # def setActionMsg(self, text):
+ #   self.actionMsg = text
+#def setDisplayName(self, text):
+#  #  self.displayName = text
     
   # Control what happens when you send keyboard presses to it
   def type(self, ch):
@@ -591,15 +606,17 @@ class BasicMenuItem:
     
   # Called when entering edit mode on the item
   def onBeginEdit(self):
+    return "Begin Edit Message"
     pass # This is a hook
     
   # What happens when this is activated by pressing enter?
   def doAction(self):
-    pass # This is a hook
+    return "Action Completed Message"
+    #pass # This is a hook
 
 
-# A button to export audio as a WAV file, assuming you have wave installed.
-class saveButton(InputPad, BasicMenuItem):
+# A button to export audio as a WAV file, assuming you have the "wave" module installed.
+class exportButton(InputPad, BasicMenuItem):
   def __init__(self, ySize, xSize, yStart, xStart, tArgs, progressBar):
     super().__init__(ySize, xSize, yStart, xStart)
     self.tArgs = tArgs
@@ -608,26 +625,34 @@ class saveButton(InputPad, BasicMenuItem):
     self.lock = threading.Lock()
     self.setText("Export Audio")
     self.refresh()
+
+  def getDisplayName(self):
+    return "Export Button"
   
   def updateValue(self, text):
     self.setText(text)
     
   def onBeginEdit(self):
       self.setText("") # Clear and allow you to enter the filename
+      return "Please enter filename, and press enter to save. Any existing file will be overwritten."
     
   def setInfoDisplay(self, infoPad):
     self.infoPad = infoPad
     
-  def unhighlight(self):
+  def onHoverEnter(self):
+    super().onHoverEnter()
+    return "Press enter to save a recording as a WAV file."
+
+  def onHoverLeave(self):
     self.setText("Export Audio")
-    super().unhighlight()
+    super().onHoverLeave()
     
-  #TODO: Override type, make it check filenames live
+  # Override type, make it check filenames live
   def type(self, ch):
     super().type(ch)
     name = self.getText()
     if name == '':
-      self.infoPad.updateInfo(self.toolTip)
+      self.infoPad.updateInfo("Please enter filename, and press enter to save. Any existing file will be overwritten.")
       return
     
     # Update the infoDisplay
@@ -654,23 +679,23 @@ class saveButton(InputPad, BasicMenuItem):
   # Where it actually saves the file
   def doAction(self):
     name = self.getText()
+    actionMessage = "File saved in same directory!"
     if name == '':
-      self.setActionMsg("Cancelled.")
       self.setText("Export Audio")
-      return
+      return "Cancelled."
     self.setText("Export Audio")
     path = ''
     if '/' in name:
       fullPath = name + ".wav"
       parDir = '/'.join(fullPath.split('/')[0:-1])
       if not os.path.isdir(parDir):
-        self.setActionMsg("Cannot export audio: invalid path \"" + fullPath + "\"")
+        actionMsg = "Cannot export audio: invalid path \"" + fullPath + "\""
         self.setText("Export Audio")
         return
     else:
       path = os.getcwd()
       fullPath = path + "/" + name + ".wav"
-    self.setActionMsg("Saving file as " + fullPath)
+    actionMsg = "Saving file as " + fullPath
     
     with self.lock:
       self.progressBar.temporaryPause = False
@@ -681,6 +706,7 @@ class saveButton(InputPad, BasicMenuItem):
     thread = threading.Thread(target=exportAudio, args=(fullPath, self.tArgs, self.progressBar, self.infoPad), daemon = True)
     thread.start()
     #exportAudio(fullPath)
+    return actionMsg
     
     
 # Exports audio to a wav file, optionally showing progress on the infoPad if specified
@@ -754,8 +780,8 @@ class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and Basic
     self.lastValue = value
   
   # Updates the last value first in order to leave the cursor in the right position
-  def unhighlight(self):
-    super().unhighlight()
+  def onHoverLeave(self):
+    super().onHoverLeave()
     self.updateValue(self.lastValue)
     self.refresh()
   
@@ -816,22 +842,35 @@ class startRangeMenuItem(NumericalMenuSetting):
     super().__init__(ySize, xSize, yStart, xStart, name, "int")
     self.lock = threading.Lock()
     self.tArgs = tArgs
-  
+
+  def getDisplayName(self):
+    return "Start Value"
+
+  # Info message definitions
+  def onHoverEnter(self):
+    super().onHoverEnter()
+    return "Press enter to change the start range."
+  def onBeginEdit(self):
+    super().onBeginEdit()
+    return "Setting start range... Press enter to apply."
+
   def doAction(self):
     value = 0
+    actionMsg = "Start range Changed!"
     try:
       value = self.getValue()
     except ValueError:
       pass
     else:
       if value > self.tArgs.end: # Don't allow crossing start / end ranges
-        self.actionMsg = "Start range cannot be greater than end range!"
+        actionMsg = "Start range cannot be greater than end range!"
         self.updateValue(self.tArgs.start)
       else:
-        self.actionMsg = "Start range changed to " + str(value) + "."
+        actionMsg = "Start range changed to " + str(value) + "."
         self.lastValue = str(value)
         with self.lock:
           self.tArgs.start = value
+      return actionMsg
 
 
 # A special case of a NamedMenuSetting that sets the end range in tArgs
@@ -842,6 +881,13 @@ class endRangeMenuItem(NumericalMenuSetting):
     self.tArgs = tArgs
     self.stepWin = None
     
+  def onHoverEnter(self):
+    super().onHoverEnter()
+    return "Press enter to change the end range."
+  def onBeginEdit(self):
+    super().onBeginEdit()
+    return "Setting end range... Press enter to apply."
+
   # You may give it the stepMenuItem object in order for it to refresh
   # and update the step if needed.
   def setStepWin(self, win):
@@ -849,27 +895,38 @@ class endRangeMenuItem(NumericalMenuSetting):
     
   def doAction(self):
     value = 0
+    actionMsg = "End range changed!"
     try:
       value = self.getValue()
     except ValueError:
       pass
     else:
       if value < self.tArgs.start: # Don't allow crossing start / end ranges
-        self.actionMsg = "End range cannot be less than start range!"
+        actionMsg = "End range cannot be less than start range!"
         self.updateValue(self.tArgs.end)
       else:
-        self.actionMsg = "End range changed to " + str(value) + "."
+        actionMsg = "End range changed to " + str(value) + "."
         self.lastValue = str(value)
         with self.lock:
           self.tArgs.end = value
+
+      return actionMsg
       
-      
+
   # A special case of a NamedMenuSetting that sets the step amount in tArgs
 class stepMenuItem(NumericalMenuSetting):
   def __init__(self, ySize, xSize, yStart, xStart, name, tArgs):
     super().__init__(ySize, xSize, yStart, xStart, name, "float")
     self.lock = threading.Lock()
     self.tArgs = tArgs
+
+  # Tooltip Message Definitions
+  def onBeginEdit(self):
+    super().onBeginEdit()
+    return "Setting step amount... Press enter to apply."
+  def onHoverEnter(self):
+    super().onHoverEnter()
+    return "Press enter to change the step amount."
   
   def doAction(self):
     value = 0.
@@ -878,11 +935,11 @@ class stepMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      self.actionMsg = "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.tArgs.rate) + "hz."
       self.updateValue(value)
       self.lastValue = str(value)
       with self.lock:
         self.tArgs.step = value
+    return "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.tArgs.rate) + "hz."
     
     
     
@@ -899,18 +956,25 @@ class ProgressBar(BasicMenuItem):
     self.temporaryPause = False
     self.tArgs = tArgs
     
-    
     # Start progress bar thread
     self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
     self.progressThread.start()
+
+  def getDisplayName(self):
+    return "Progress Bar"
+
+  def onBeginEdit(self):
+    super().onBeginEdit()
+    return "V- toggle visibility, Left/Right Arrows- move back and forth, Space- pause/play"
+
+  def onHoverEnter(self):
+    self.temporaryPause = True # To prevent unhighlighting
+    super().onHoverEnter()
+    return "Press enter to pause, seek, and change progress bar settings."
     
-  def highlight(self):
-    self.temporaryPause = True
-    super().highlight()
-    
-  def unhighlight(self):
+  def onHoverLeave(self):
     self.temporaryPause = False
-    super().unhighlight()
+    super().onHoverLeave()
     
   def type(self, ch):
     with self.lock:
@@ -949,7 +1013,7 @@ class ProgressBar(BasicMenuItem):
   
   # Defines action to do when activated
   def doAction(self):
-    pass
+    return "Done editing progress bar."
   
   
   # Toggles progress bar visibility
@@ -1016,6 +1080,86 @@ class ProgressBar(BasicMenuItem):
     # Unlock thread
     self.lock.release()
     
+class graphButtonMenuItem(BasicMenuItem):
+  isGraphOn = False
+  def __init__(self, ySize, xSize, yStart, xStart, tArgs, audioClass):
+    super().__init__(ySize, xSize, yStart, xStart)
+    self.tArgs = tArgs
+    self.audioClass = audioClass
+    self.isGraphThreadRunning = False
+    self.graphThread = None
+
+  def __del__(self):
+    with threading.Lock():
+      self.isGraphThreadRunning = False
+
+  def refresh(self):
+    super().refresh()
+    self.displayText("Graph")
+
+  def isOneshot(self):
+    return True
+
+  def getDisplayName(self):
+    return "Graph"
+
+  # TODO: Why doesn't this highlight it???
+  def onHoverEnter(self):
+    super().onHoverEnter()
+    return "Press enter to toggle a graph of the output"
+
+  def onBeginEdit(self):
+    super().onBeginEdit()
+    return "Toggling graph..."
+
+  # Currently disabled ; doesn't work in a thread...
+  def graphThreadRunner(self, tArgs, audioClass):
+    plt.ion()
+    plt.show()
+    while(self.isGraphThreadRunning):
+      exp_as_func = audioClass.getAudioFunc() # Update expression
+      if exp_as_func is not None:
+        curr = audioClass.index # Get current position
+        plt.plot([x for x in self.calcIterator(curr, curr+10000, tArgs.step, exp_as_func)])
+        plt.draw()
+      time.sleep(1)
+    plt.close()
+
+  def graphOn(self):
+    self.audioClass.enableGraph()
+    #with threading.Lock(): # This should at least flush the changes... Right?
+    #  self.isGraphThreadRunning = True    
+    #self.graphThread = threading.Thread(target=self.graphThreadRunner, args=(self.tArgs, self.audioClass), daemon=True)
+    #self.graphThread.start()
+    # matplotlib.use("macOSX")
+    
+   
+
+  def graphOff(self):
+    self.audioClass.disableGraph()
+    #with threading.Lock():
+    #  self.isGraphThreadRunning = False
+
+  def doAction(self):
+    actionMsg = "Toggled Graph!"
+    if self.isGraphOn:
+      self.graphOff()
+      actionMsg = "Turned Graph off."
+    else:
+      self.graphOn()
+      actionMsg = "Turned Graph on."
+    self.isGraphOn = not self.isGraphOn
+
+
+    #curr = self.audioClass.index # Get current position
+    #exp_as_func = self.audioClass.getAudioFunc() # Update expression
+    #actionMsg = str([x for x in self.calcIterator(curr, curr+10000, self.tArgs.step, exp_as_func)])
+    #plt.plot([x for x in self.calcIterator(curr, curr+10000, self.tArgs.step, exp_as_func)])
+    #plt.show()
+    #plt.draw()
+    return actionMsg
+
+
 
 # Just a title display at the top of the screen
 class TitleWindow:
@@ -1024,7 +1168,7 @@ class TitleWindow:
     self.win = curses.newwin(ySize, xSize, yStart, xStart)
     self.refresh()
   
-  # Draws the title and highlights it
+  # Draws the title and onHoverEnters it
   def refresh(self):
     self.win.clear()
     self.win.addstr("Calcwave v" + version)
@@ -1050,7 +1194,7 @@ class UIManager:
     #self.xSize = xSize
     #self.yStart = yStart
     #self.xStart = xStart
-    
+
     self.tArgs = tArgs
     self.infoPad = None
         
@@ -1062,43 +1206,26 @@ class UIManager:
     
     # Create windows and store them in the self.settingPads list.
     
+    # Graph Button
+    graphBtn = graphButtonMenuItem(int(ySize/2), self.boxWidth, yStart, xStart, tArgs, audioClass)
+
     # Start range
-    startWin = startRangeMenuItem(int(ySize/2), self.boxWidth, yStart, xStart, "beg", tArgs)
-    startWin.setHoverMsg("Press enter to change the start range.")
-    startWin.setToolTip("Setting start range... Press enter to apply.")
-    startWin.setActionMsg("Start range changed!")
-    startWin.setDisplayName("Start Value")
+    startWin = startRangeMenuItem(int(ySize/2), self.boxWidth, yStart+1, xStart, "beg", tArgs)
     startWin.updateValue(tArgs.start)
     
     # Progress bar
-    progressWin = ProgressBar(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth, audioClass, tArgs)
-    progressWin.setHoverMsg("Press enter to change the progress bar settings")
-    progressWin.setToolTip("V- toggle visibility, Left/Right Arrows- move back and forth, Space- pause/play")
-    progressWin.setActionMsg("Done editing.")
-    progressWin.setDisplayName("Progress Bar")
+    progressWin = ProgressBar(int(ySize/2), self.boxWidth, yStart+1, xStart + self.boxWidth, audioClass, tArgs)
     
     # End range
-    endWin = endRangeMenuItem(int(ySize/2), self.boxWidth, yStart, xStart + self.boxWidth * 2, "end", tArgs)
-    endWin.setHoverMsg("Press enter to change the end range.")
-    endWin.setToolTip("Setting end range... Press enter to apply.")
-    endWin.setActionMsg("End range changed!")
-    endWin.setDisplayName("End Value")
+    endWin = endRangeMenuItem(int(ySize/2), self.boxWidth, yStart+1, xStart + self.boxWidth * 2, "end", tArgs)
     endWin.updateValue(tArgs.end)
     
     # Step value
-    stepWin = stepMenuItem(int(ySize/2), self.boxWidth, yStart + 1, xStart + self.boxWidth * 2, "step", tArgs)
-    stepWin.setHoverMsg("Press enter to change the step amount.")
-    stepWin.setToolTip("Setting step amount... Press enter to apply.")
-    stepWin.setActionMsg("Step amount changed!")
-    stepWin.setDisplayName("Step Value")
+    stepWin = stepMenuItem(int(ySize/2), self.boxWidth, yStart + 2, xStart + self.boxWidth * 2, "step", tArgs)
     stepWin.updateValue(tArgs.step)
     
     # This currently takes up the width of the screen. Change the value from xSize to resize it
-    saveWin = saveButton(int(ySize/2), int(xSize*(2/3)-1), yStart+1, xStart, tArgs, progressWin)
-    saveWin.setHoverMsg("Press enter to save a recording as a WAV file.")
-    saveWin.setToolTip("Please enter filename, and press enter to save. Any existing file will be overwritten.")
-    saveWin.setActionMsg("File saved in same directory!")
-    saveWin.setDisplayName("Export Button")
+    saveWin = exportButton(int(ySize/2), int(xSize*(2/3)-1), yStart+2, xStart, tArgs, progressWin)
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -1106,6 +1233,7 @@ class UIManager:
     
     # Be sure to add your object to the settingPads list!
     # They will be selected by the arrow keys in the order of this list.
+    self.settingPads.append(graphBtn)
     self.settingPads.append(startWin)
     self.settingPads.append(progressWin)
     self.settingPads.append(endWin)
@@ -1127,30 +1255,32 @@ class UIManager:
     if self.infoPad:
       self.infoPad.setMainWindow(window)
     
-  # Set the infoPad in order for it to display information
+  # Set the infoPad in the most godawful way in order for it to display information
   def setInfoDisplay(self, infoPad):
     self.infoPad = infoPad
-    self.settingPads[3].setInfoDisplay(infoPad) # Give to saveButton
+    self.settingPads[4].setInfoDisplay(infoPad) # Give to exportButton
   
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
-  def refreshAll(self):
-    self.settingPads[0].updateValue(self.tArgs.start)
-    self.settingPads[2].updateValue(self.tArgs.end)
-    self.settingPads[3].updateValue("Export Audio")
-    self.settingPads[4].updateValue(self.tArgs.step)
+  def refreshAll(self): # TODO: Wait... Don't I give each object a tArgs anyways??? This is... despicable...
+    self.settingPads[0].updateValue(0)
+    self.settingPads[1].updateValue(self.tArgs.start)
+    self.settingPads[3].updateValue(self.tArgs.end)
+    self.settingPads[4].updateValue("Export Audio")
+    self.settingPads[5].updateValue(self.tArgs.step)
     for win in self.settingPads:
       win.refresh()
   
-  # Retrieves the ProgressBar object
+  # Retrieves the ProgressBar object in the most godawful way...
   def getProgressBar(self):
-    return self.settingPads[1]
+    return self.settingPads[2]
     
   # Refreshes title message based on editing status
   def refreshTitleMessage(self):
     if self.editing:
-      if self.focusedWindow.displayName != "":
-          self.title.customTitle("Editing " + self.focusedWindow.displayName)
+      displayName = self.focusedWindow.getDisplayName()
+      if displayName != "":
+          self.title.customTitle("Editing " + displayName)
     else:
       self.title.refresh()
       
@@ -1161,19 +1291,19 @@ class UIManager:
     if ch == 27: # Escape key
       if self.editing == True:
         self.editing = False
-        self.focusedWindow.highlight()
+        #self.focusedWindow.onHoverEnter()
         self.infoPad.updateInfo("Cancelled editing!")
-        self.focusedWindow.highlight()
+        self.focusedWindow.onHoverEnter()
         self.refreshTitleMessage()
         return
       else: # Not editing? Interpret as shut down
         with self.lock:
           self.infoPad.updateInfo("ESC recieved. Shutting down...")
           self.tArgs.shutdown = True
-    
+
     # Switch between menu items
     if self.editing == False and (ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT):
-      self.focusedWindow.unhighlight()
+      self.focusedWindow.onHoverLeave()
       if ch == curses.KEY_LEFT:
         if self.focusedWindowIndex > 0:
           self.focusedWindowIndex = self.focusedWindowIndex - 1
@@ -1185,34 +1315,34 @@ class UIManager:
         else:
           self.focusedWindowIndex = 0
       self.focusedWindow = self.settingPads[self.focusedWindowIndex]
-      self.focusedWindow.highlight()
+      msg = self.focusedWindow.onHoverEnter()
       self.setMainWindow(self.focusedWindow)
-      self.infoPad.updateInfo(self.focusedWindow.hoverMsg)
+      self.infoPad.updateInfo(msg)
       return
       
     self.setMainWindow(self.focusedWindow)
     
-    
+    # Function macro to end editing ; TODO: Make this not horribly inline with code?
+    def endEdit():
+      self.editing = False
+      # Run action specified in class
+      actionMsg = self.focusedWindow.doAction()
+      self.focusedWindow.onHoverEnter()
+      self.infoPad.updateInfo(actionMsg)
+      self.refreshTitleMessage()
     
     # Function macro to begin edting
     def beginEdit():
       self.editing = True
-      self.focusedWindow.unhighlight() # Call the focused item's basic functions
-      self.infoPad.updateInfo(self.focusedWindow.toolTip)
+      self.focusedWindow.onHoverLeave() # Item exits hover mode while editing
       self.refreshTitleMessage()
-      self.focusedWindow.onBeginEdit()
+      tooltipMsg = self.focusedWindow.onBeginEdit()
+      self.infoPad.updateInfo(tooltipMsg)
+      if self.focusedWindow.isOneshot(): # If onBeginEdit() returns True, end edit immediately after.
+        endEdit()
       self.focusedWindow.refresh()
-      
-    # Function macro to end editing
-    def endEdit():
-      self.editing = False
-      # Run action specified in class
-      self.focusedWindow.doAction()
-      self.focusedWindow.highlight()
-      self.infoPad.updateInfo(self.focusedWindow.actionMsg)
-      self.refreshTitleMessage()
     
-    # Toggle editing on and off and handle highlighting
+    # Toggle editing on and off and handle onHoverEntering (highlighting)
     if ch == curses.KEY_ENTER:
       if self.editing == False:
         beginEdit()
@@ -1226,11 +1356,7 @@ class UIManager:
       if self.editing == False:
         beginEdit() # Begin editing automatically
       self.focusedWindow.type(ch)
-    elif self.editing:
-      self.infoPad.updateInfo(self.focusedWindow.toolTip)
-    else:
-      self.infoPad.updateInfo(self.focusedWindow.hoverMsg)
-
+    
     
 
 
@@ -1273,14 +1399,111 @@ class AudioPlayer:
     self.tArgs = tArgs
     self.index = 0
     self.paused = False
+    self.graph = None
+    self.isGraphEnabled = None
+    #self.enableGraph()
+
+  # A simple iterator that calls func from start to end over step.
+  # Sort of like Python range(), but can work with any number, including floats
+  # Returns 0 if there was an exception evaluating the function (hence "maybe")
+  class maybeCalcIterator(object):
+    def __init__(self, start, end, step, func):
+      self.start, self.end, self.step, self.func, self.curr = start, end, step, func, start
+    def __iter__(self):
+      return self
+    def __next__(self):
+      if(self.curr > self.end):
+        raise StopIteration()
+      x, self.curr = self.curr, self.curr + self.step
+      try:
+        return self.func(x)
+      except Exception as e:
+        return 0
+
+  def enableGraph(self):
+    with threading.Lock():
+      self.isGraphEnabled = True
+  
+  def disableGraph(self):
+    with threading.Lock():
+      self.isGraphEnabled = False
+
+  # It periodically will check if the graph should be enabled to make it so the graph won't be enabled from another thread. This is terrible code.
+  def updateGraphState(self):
+    if self.isGraphEnabled == None:
+      pass
+    elif self.isGraphEnabled == True:
+      self.graphOn()
+    elif self.isGraphEnabled == False:
+      self.graphOff()
+    self.isGraphEnabled = None
+
+  def graphOn(self):
+    plt.ion()
+    plt.ylim([-1,1])
+    #X = [x for x in self.calcIterator(self.tArgs.start, self.tArgs.end, self.tArgs.step), lambda x: x]
+    audioFunc = self.getAudioFunc()
+    if not audioFunc:
+      audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
+    X = [x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * (self.tArgs.frameSize-1), self.tArgs.step, lambda x: x)]
+    Y = [0.0] * self.tArgs.frameSize #[x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * self.tArgs.frameSize, self.tArgs.step, audioFunc)]
+    self.graph = plt.plot(X, Y)[0] #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
+
+  # TODO: Why doesn't it actually close?
+  def graphOff(self):
+    plt.close('all')
+    self.graph = None
+    #gc.collect(2)
     
+
+  # NOTE: Not used for now...
+  #def drawGraph(self, curr, start, end, step, exp_as_func):
+  #  data = [x for x in self.maybeCountingIterator(10000, exp_as_func, curr, step, start, end)]
+  #  self.graph.set_ydata([x for x in self.maybeCalcIterator(start, start+step * 10000, step, exp_as_func)])
+  #  plt.draw()
+  #  plt.pause(0.01) 
+
+  
+
   def play(self):
     self.audioThread(self.tArgs,)
   
   # Set this to True to pause
   def setPaused(self, paused):
     self.paused = paused
-    
+
+  def getAudioFunc(self):
+    try: # Don't error-out on an empty text box
+      if(self.tArgs.expression):
+        exp_as_func = eval('lambda x: ' + self.tArgs.expression, self.tArgs.functionTable)
+        return exp_as_func
+      #exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
+    except SyntaxError:
+      #sys.stderr.write("Error creating generator function: Expression has not yet been set, or other SyntaxError\n")
+      pass
+
+  # Calculates n results from func, starting at curr, and optionally looping to start it reaches more than end, and returns 0 for any errors that occur.
+  class maybeCountingIterator(object):
+    def __init__(self, n, func, curr, step, start = None, end = None):
+      #self.start, self.end, self.step, self.func, self.curr = start, end, step, func, start
+      self.n, self.func, self.curr, self.step, self.start, self.end = n, func, curr, step, start, end
+      self.count = 0
+      if start == None: # Loop to curr if end is provided, but start is none for some reason
+        self.start = curr
+    def __iter__(self):
+      return self
+    def __next__(self):
+      if(self.count > self.n):
+        raise StopIteration()
+      self.count = self.count + 1
+      x, self.curr = self.curr, self.curr + self.step
+      if self.end is not None and self.curr > self.end: # Loop around to start if end is provided
+        self.curr = self.start
+      try:
+        return self.func(x)
+      except Exception as e:
+        return 0
+
   def audioThread(self, tArgs):
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paFloat32,
@@ -1295,13 +1518,8 @@ class AudioPlayer:
     
     #Thanks to https://stackoverflow.com/a/12467755 by Ohad
     #for a much more efficient eval() for performance improvements
-    
-    try: # Don't error-out on an empty text box
-      exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
-    except SyntaxError:
-      sys.stderr.write("Expression has not yet been set, or other SyntaxError\n")
-      pass
-      
+    #exp_as_func = eval('lambda x: ' + tArgs.expression)
+    exp_as_func = self.getAudioFunc()
     
     try: #Make breaking out of the infinate loop possible by a keyboard interrupt
       #exp_as_func = eval('lambda x: ' + tArgs.expression)
@@ -1341,15 +1559,25 @@ class AudioPlayer:
             frameCount = 0
             if tArgs.shutdown == True:
               sys.exit()
+
+            #if self.graph is not None: # Graph?
+              #self.drawGraph(self.index,tArgs.end+self.tArgs.step*10000, self.tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
+              #self.drawGraph(self.index, tArgs.start, tArgs.end, tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
             try: # Set the new expression for next time
               exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
             except:
               pass
             chunk = np.array(result)
+
             try: # This try statement may not be needed if better verification is made beforehand...
               stream.write( chunk.astype(np.float32).tobytes() )
             except TypeError:
               time.sleep(0.5)
+            self.updateGraphState() # Have this thread manage the graph
+            if self.graph is not None and len(result) == self.tArgs.frameSize: # Draw the graph if enabled # TODO: len(result) should ALWAYS be equal to frameSize...
+              self.graph.set_ydata(result)
+              plt.draw()
+              plt.pause(0.01) 
             result = []
           
           if tArgs.shutdown:
@@ -1376,6 +1604,8 @@ class AudioPlayer:
       stream.close()
       p.terminate()
       sys.stderr.write("Audio player shut down.\n")
+        
+      
     
 
 
@@ -1450,11 +1680,20 @@ def main(argv = None):
     if curses.has_colors():
       curses.start_color()
       curses.use_default_colors()
-    
+
+  try:
     # ySize, xSize, yStart, xStart
-    menu = UIManager(2, cols, rows - 4, 0, tArgs, audioClass)
+    menu = UIManager(2, cols, rows - 5, 0, tArgs, audioClass)
     #Start the GUI input thread
     window = WindowManager(tArgs, scr, menu)
+  except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
+    curses.echo()
+    curses.nocbreak()
+    scr.keypad(False)
+    curses.endwin()
+    print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
+    raise e
+   
     
     tArgs.expression = "0" # Default value
   else:
