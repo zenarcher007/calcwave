@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.2.9"
+version = "1.4.0"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
