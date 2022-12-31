@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.4.0"
+version = "1.5.0"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -102,9 +102,8 @@ class Point:
   def withCol(self, col): # Returns a new Point with the col set to the given absolute position
     return Point(col = col, row = self.row)
   def with_wrap_col(self, cols, width): # Increments the column by cols, wrapping to width and increasing row if it exceeds this.
-    newCols = self.col + cols
-    extraRows = int(newCols / width)
-    wrappedCols = newCols % width
+    extraRows = int(cols / width)
+    wrappedCols = cols % width
     return Point(row = self.row + extraRows, col = wrappedCols)
   def add_wrap_col(self, cols, width): # Same as with_wrap_col, but adds to the current self.col
     return self.with_wrap_col(self.col + cols, width)
@@ -205,25 +204,34 @@ class BasicEditor:
 class TextEditor(BasicEditor):
   def __init__(self, box: Box):
     super(TextEditor, self).__init__(box)
-    self.data = [[]]
+    self.data = [[]] # An array of lines constisting of an array of chars
     self.dataPos = self.cursorPos
     self.oldHighlightPos = Point(0,0)
     self.cursorOffset = 0
     self.scrollOffset = 0
     self.lineOffset = 0 # For reference when the cursor wraps to the next line
     self.win.scrollok(True) # Enable curses scrolling
+    self.highlightedRanges = [] # Holds tuples with the beginning and end ranges of highlighted portions of the screen to be removed later.
 
   def setText(self, text: str):
-    self.win.clear()
+    #self.win.clear()
     self.data = [[]]
     self.cursorOffset = 0
     self.scrollOffset = 0
     self.lineOffset = 0
-    self.cursorPos = Point(0,0)
+    self.setCursorPos(Point(0,0))
     self.dataPos = Point(0,0)
-    for ch in text:
-      self.type(ch)
-    
+    byLine = text.split('\n')
+    lineCount = len(byLine)
+    for i, line in enumerate(byLine):
+      self.data[i] = list(line)
+      self.dataPos = Point(row = i, col = 0)
+      self.goToEol()
+      if i < lineCount-1:
+        self.enter()
+        self.refresh()
+    self.refresh()
+
 
   def getText(self):
     return '\n'.join(''.join(line) for line in self.data)
@@ -328,7 +336,91 @@ class TextEditor(BasicEditor):
       self.win.insertln()
     self.moveCursor(rows = 0, cols = 1)
 
-  # Refreshes the last line, closest to the end of the text editor
+  # Highlights the range of text from p1 to p2, and adds this range into self.highlightedRanges so that it can be removed later
+  def highlightRange(self, p1 : Point, p2: Point):
+    p1 = p1.relative(rows = -1, cols = -1) # Convert 1-indexed points to 0-indexed points
+    p2 = p2.relative(rows = -1, cols = -1)
+    self.chattrRange(p1, p2, curses.A_UNDERLINE)
+    self.highlightedRanges.append((p1, p2))
+  
+  # Override restoreLastHighlight of BasicEditor
+  def restoreLastHighlight(self):
+    for p1, p2, in self.highlightedRanges:
+      self.chattrRange(p1, p2, curses.A_NORMAL)
+    self.highlightedRanges = []
+    return super().restoreLastHighlight()
+
+  # Not-very-efficiently changes a curses attribute on a range of text, beginning at the absolute text position p1, and ending at p2. Assumes p2.row > p1.row and p2.col > p1.col.
+  # TODO: Find just the first screen pos, and then use the lengths of its text to iterate?
+  def chattrRange(self, p1 : Point, p2: Point, attribute):
+    begin = self.findScreenPos(p1)
+    cursorRow = begin.row
+    dataPt = begin.withCol(0)
+    while cursorRow < self.shape.rowSize and dataPt.row < len(self.data):
+      height = self.getLineHeight(dataPt.row)
+      rowLen = len(self.data[dataPt.row])
+      rowSize = min(rowLen - dataPt.col, self.shape.colSize) # Size of the text visible on the current display row
+      isFirst = dataPt.row == begin.row and dataPt.col < self.shape.colSize
+      colStart = p1.col if isFirst else 0 # On the first line?
+      isLast = dataPt.row == p2.row and int(dataPt.col / self.shape.colSize) == height-1 
+      colEnd = p2.col % self.shape.colSize if isLast else self.shape.colSize #int(dataPt.col / self.shape.colSize) == height-1 # On the last line of the last line? #dataPt.row == p2.row and dataPt.col < self.shape.colSize else rowLen
+      #if cursorRow == 1: self.infoPad.updateInfo(f"isFirst: {isFirst}, isLast: {isLast}, cursorRow: {cursorRow}, colStart: {colStart}, colEnd: {colEnd}")
+      self.win.chgat(cursorRow, colStart, max(colEnd - colStart, 1) , attribute)
+      dataPt = dataPt.add_wrap_col(rowSize, width = max(1, rowLen)) # Go to next visible line
+      cursorRow = cursorRow + 1
+      if isLast: break
+    self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Refresh cursor, in case it drew on top of it
+    self.win.refresh()
+      
+      
+
+
+
+      #dataPt.add_wrap_col(self.shape.colSize)
+      ##if dataRow == begin.row:
+      ##  fromCol = dataPt.col
+      ##  toCol = dataPt.with_wrap_col(p2.col, width = self.shape.colSize)\
+      ##cursorRow = cursorRow + 1
+      ##data
+      #rowSize = min(rowLen - dataPt.col, self.shape.colSize) # Size of the text visible on the current display row
+      #dataPt.add_wrap_col(rowSize, width = row)
+    
+    
+  
+#    end = self.findScreenPos(p2)
+#    if begin is None:
+#      begin = Point(0,0)
+#    if end is None:
+#      end = Point(row = self.shape.rowSize-1, col = self.shape.colSize - 1)
+#    dataPt = self.dataPos
+#    for row in range(begin.row, end.row): # Follow the rows of text as would be displayed on screen by moving line by line, or sooner if the tail is shorter than the page width
+#      rowLen = len(self.data[dataPt.row])
+#      rowSize = min(rowLen - dataPt.col, self.shape.colSize) # Size of the text visible on the current display row
+#      colStart = p1.col if row == p1.row else 0
+#      colEnd = p2.col if row == p2.row else rowSize
+#      self.win.chgat(row, colStart, colEnd - colStart, attribute)
+#      dataPt = dataPt.add_wrap_col(rowSize, width = rowLen)
+#    self.win.refresh()
+
+  # Attempts to crawl to, and return the point of, the visible portion on the screen that matches up with the absolute dataPos point.
+  # Returns None if the given point is off the screen
+  def findScreenPos(self, textPos : Point):
+    dataRow = self.dataPos.row
+    increment = -1 if textPos.row < self.cursorPos.row else 1
+    newRow = self.getLineCurPos().row
+    while True:
+      if dataRow == textPos.row:
+        return Point(row = newRow, col = 0).with_wrap_col(textPos.col, width = self.shape.colSize) # Wrap to below lines if the position is greater than the width of the screen
+      elif newRow < 0 or newRow > self.shape.rowSize:
+        return None
+      else:
+        dataRow = dataRow + increment
+        if dataRow >= len(self.data):
+          return None
+        else:
+          newRow = newRow + self.getLineHeight(dataRow) * increment
+  
+  # Crawls to, and refreshes the bottommost visible line in the text editor
   def refreshLastLine(self):
     # Skip to the ending line
       row = self.cursorPos.row
@@ -514,8 +606,8 @@ class InputPad:
       self.win.move(self.curRow + relRow, self.curCol + relCol)
       self.curRow = self.curRow + relRow
       self.curCol = self.curCol + relCol
-      if move_virtual:
-        self.virtCurMove(row=self.curRow, col=self.curCol)
+      #if move_virtual:
+      self.virtCurMove(row=self.curRow, col=self.curCol)
   
   # Sets absolute cursor position
   def curPos(self, row, col, move_virtual=True):
@@ -760,6 +852,7 @@ class threadArgs:
     self.shutdown = False
     self.step = 1. # How much to increment x
     self.functionTable = self.getFunctionTable()
+    self.evaluator = Evaluator("main=0")
     self.lock = threading.Lock()
     
   # Define functions available to eval here.
@@ -775,41 +868,26 @@ class threadArgs:
 
 # Accepts CalcWave text input
 # Parses and evaluates the CalcWave syntax
+# Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
+  # Lightweight constructor that then immediately compiles text
   def __init__(self, text, symbolTable = vars(math)):
     self.symbolTable = symbolTable
     self.text = text
     symbolTable['x'] = 0
     symbolTable["main"] = 0
     self.prog = compile(text, '<string>', 'exec', optimize=2)
-  
+
+  # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
     self.symbolTable['x'] = x
-    try:
-      exec(self.prog, self.symbolTable, self.symbolTable)
-    except:
-      pass
+    exec(self.prog, self.symbolTable, self.symbolTable)
     return self.symbolTable["main"]
-    
-#  exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
-  def parse(self):
-    byLines = self.text.split('\n')
-    for lineNum in range(len(byLines)): # Search for substitution assignments
-      line = byLines(lineNum)
-      if '=' in line:
-        try:
-          var, assignment = line.split('=')
-          var.strip() # Remove spaces from either side
-          assignment.strip()
-          self.symbolTable[var] = eval()
-        except ValueError as e:
-          raise AttributeError(f"[row={lineNum},col=0,len={len(line)}]: Unable to parse assignment")
-      
 
 
 # Handles GUI
 class WindowManager:
-  def __init__(self, tArgs, scr, menu):
+  def __init__(self, tArgs, scr, initialExpr, menu):
     self.tArgs = tArgs
     self.scr = scr
     self.menu = menu
@@ -820,23 +898,22 @@ class WindowManager:
   
     rows, cols = self.scr.getmaxyx()
     #Initialize text editor
-    self.pad = TextEditor(Box(rowSize = rows - 6, colSize = cols, rowStart = 1, colStart = 0))
-    
+    self.editor = TextEditor(Box(rowSize = rows - 6, colSize = cols, rowStart = 1, colStart = 0))
     
     # Tell the menu that this is the main window
-    self.menu.setMainWindow(self.pad.win)
+    self.menu.setMainWindow(self.editor.win)
   
     #Initialize info display window
     self.infoPad = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
-    self.infoPad.setMainWindow(self.pad.win) # So it will know
+    self.infoPad.setMainWindow(self.editor.win) # So it will know
     # what window to return the cursor to after it updates
     self.menu.setInfoDisplay(self.infoPad) # Give the menu an infoPad
     # so it can display its own information on it.
     
-
+    self.editor.infoPad = self.infoPad ######## TEMP ##########
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
     self.thread.start()
-    self.pad.setText(tArgs.expression)
+    self.editor.setText("main = " + initialExpr)
     
   def windowThread(self, tArgs, scr, menu):
     lock = threading.Lock()
@@ -858,12 +935,12 @@ class WindowManager:
             break
           
           
-        # Only runs once
+        # Only runs once. This was due to a strange bug where it didn't seem to work before this loop. TODO: Please fix this...
         if startUp == True:
           startUp = False
           self.menu.refreshAll()
-          self.pad.refresh()
-          self.pad.infoPad = self.infoPad ###### TEMP; For debugging ######
+          self.editor.refresh()
+          self.editor.infoPad = self.infoPad ###### TEMP; For debugging ######
           self.menu.title.refresh()
           
         
@@ -876,42 +953,59 @@ class WindowManager:
           if menuFocus == True:
             self.menu.type(ch)
           elif settingFocus == False:
-            p = self.pad.getPos()
+            p = self.editor.getPos()
             self.infoPad.updateInfo(f"Line: {p.row}, Col: {p.col}")
             # Type on the inputPad, verifying each time
 ###            self.infoPad.updateInfo("Wait...")                # Disabled for testing
             #with lock:
               # Don't update the progress bar while typing. This helps a problem where the terminal cursor may sporadically jump (wrongly) to the progess bar.
             #  self.menu.getProgressBar().temporaryPause = True
-            if self.pad.type(ch):
-              text = self.pad.getText()
+            if self.editor.type(ch):
+              text = self.editor.getText()
 ###              self.infoPad.updateInfo("Verifying...")
-          
-              try: # Verify expression
-                eval('lambda x: ' + text, tArgs.functionTable)
-                with lock:
-                  self.tArgs.expression = text # Update the expression for the audioThread
+              try:
+                evaluator = Evaluator(text)
+                with tArgs.lock:
+                  tArgs.evaluator = evaluator
+              except Exception as e:
+                #self.infoPad.updateInfo(str(["e.%s = %r" % (attr, getattr(e, attr)) for attr in dir(e)]))
+                self.infoPad.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
+                self.editor.highlightRange(Point(row = e.lineno, col = e.offset), Point(row = e.end_lineno, col = e.end_offset))
+              #except:
+              #  type, value, traceback = sys.exc_info()
+              #  line = traceback.tb_lineno
+              #  lasti = traceback.tb_lasti
+              #  e = []
+              #  t = traceback
+              #  while t.tb_next:
+              #    e.append(t.tb_lineno)
+              #    t = t.tb_next
+              #  self.infoPad.updateInfo(f"{type.__name__} at line {line} {lasti}:  + {str(value)}\n{str(e)}")
+#              try: # Verify expression              # Verify disabled for now
+#                eval('lambda x: ' + text, tArgs.functionTable)
+#                with lock:
+#                  self.tArgs.expression = text # Update the expression for the audioThread
 ###                self.infoPad.updateInfo("Playing...")
-              except (SyntaxError, NameError, TypeError) as e:
-                # Highlight problem character
-                if len(e.args) == 2 and len(text) > 0:
-                  error = str(e.args[1])
-                  parseString = error.split(',', 3)
-                  if len(parseString) >= 3:
-                    column = int(parseString[2]) - 11
-                    #x = self.pad.shape.colStart + column
-                    #y = self.pad.shape.rowStart
-                    #if x >= self.pad.shape.colStart and y >= self.pad.shape.rowStart:
-                    ###xWidth = (self.pad.shape.colStart + self.pad.shape.colSize) - self.pad.shape.colStart+1
-                    ###self.pad.highlightChar(Point(col = int(column / xWidth), row = column % xWidth))
-                    ###self.pad.highlightChar(column)
+#              except (SyntaxError, NameError, TypeError) as e:
+#                # Highlight problem character
+#                if len(e.args) == 2 and len(text) > 0:
+#                  error = str(e.args[1])
+#                  parseString = error.split(',', 3)
+#                  if len(parseString) >= 3:
+#                    column = int(parseString[2]) - 11
+#                    #x = self.pad.shape.colStart + column
+#                    #y = self.pad.shape.rowStart
+#                    #if x >= self.pad.shape.colStart and y >= self.pad.shape.rowStart:
+#                    ###xWidth = (self.pad.shape.colStart + self.pad.shape.colSize) - self.pad.shape.colStart+1
+#                    ###self.pad.highlightChar(Point(col = int(column / xWidth), row = column % xWidth))
+#                    ###self.pad.highlightChar(column)
 ###                  self.infoPad.updateInfo(str(e.args[0]))
-                else:
-                  if len(text) > 0:
-                    error = str(e.args)
+#                else:
+#                  if len(text) > 0:
+#                    error = str(e.args)
 ###                    self.infoPad.updateInfo(error)
-                  else:
-                    self.tArgs.expression = "0"
+#                  else:
+#                    self.tArgs.expression = "0"
 ###                    self.infoPad.updateInfo("")
               continue
               
@@ -924,17 +1018,17 @@ class WindowManager:
             menuFocus = False
             settingFocus = True
             with lock:
-              self.infoPad.setMainWindow(self.pad.win)
-              self.menu.setMainWindow(self.pad.win)
+              self.infoPad.setMainWindow(self.editor.win)
+              self.menu.setMainWindow(self.editor.win)
               #self.menu.getProgressBar().temporaryPause = False
               self.menu.focusedWindow.onHoverLeave()
             self.infoPad.updateInfo("")
             self.menu.title.refresh() # Good time to refresh the title?
-            self.pad.refresh() # Set cursor back to typing pad
+            self.editor.refresh() # Set cursor back to typing pad
           elif ch == curses.KEY_DOWN:
             menuFocus = True
             settingFocus = True
-            self.pad.hideCursor()
+            self.editor.hideCursor()
             self.menu.focusedWindow.onHoverEnter()
             if self.menu.editing:
               self.menu.focusedWindow.onBeginEdit()
@@ -1139,7 +1233,10 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
     f.setsampwidth(2)
     f.setframerate(tArgs.rate)
     x = 0
-    exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
+    #exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
+    exp_as_func = None
+    with tArgs.lock:
+      exp_as_func = tArgs.evaluator()
     # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
     
     # Cache values to prevent changes while writing
@@ -1161,7 +1258,7 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
       raise(ValueError("Step value cannot be zero!"))
     while i <= end and i >= start: # Python's range() does not support using floats as step value
       try:
-        value = int(exp_as_func(i))
+        value = int(exp_as_func.evaluate(i) * 32767)
       except:
         pass
         
@@ -1376,6 +1473,7 @@ class ProgressBar(BasicMenuItem):
     self.progressBarEnabled = True
     self.temporaryPause = False
     self.tArgs = tArgs
+    self.otherWindow = None
     
     # Start progress bar thread
     self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
@@ -1403,7 +1501,7 @@ class ProgressBar(BasicMenuItem):
     # Handle left/right stepping
     if ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT:
       range = abs(self.tArgs.end - self.tArgs.start)
-      blockWidth = int(range / self.colSize)
+      blockWidth = int(range / self.shape.colSize)
       # Use bigger increments if not paused
       if self.audioClass.paused == False:
         blockWidth = blockWidth * 5
@@ -1951,7 +2049,10 @@ class AudioPlayer:
     #Thanks to https://stackoverflow.com/a/12467755 by Ohad
     #for a much more efficient eval() for performance improvements
     #exp_as_func = eval('lambda x: ' + tArgs.expression)
-    exp_as_func = self.getAudioFunc()
+###    exp_as_func = self.getAudioFunc()
+    exp_as_func = None
+    with tArgs.lock:
+      exp_as_func = tArgs.evaluator
     
     try: #Make breaking out of the infinate loop possible by a keyboard interrupt
       #exp_as_func = eval('lambda x: ' + tArgs.expression)
@@ -1967,8 +2068,9 @@ class AudioPlayer:
         #for self.index in range(tArgs.start, tArgs.end, 1):
         while self.index >= tArgs.start and self.index <= tArgs.end: # Loop over range
           try:
-            if tArgs.expression:
-              value = exp_as_func(self.index) # This is where the waveform values are actually calculated
+            if tArgs.expression or True: ###
+###            value = exp_as_func(self.index) # This is where the waveform values are actually calculated
+               value = exp_as_func.evaluate(self.index)
               # for an input value, substituted for x
             else:
               value = 0
@@ -1996,7 +2098,9 @@ class AudioPlayer:
               #self.drawGraph(self.index,tArgs.end+self.tArgs.step*10000, self.tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
               #self.drawGraph(self.index, tArgs.start, tArgs.end, tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
             try: # Set the new expression for next time
-              exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
+###              exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
+                 with tArgs.lock:
+                   exp_as_func = tArgs.evaluator
             except:
               pass
             chunk = np.array(result)
@@ -2102,7 +2206,7 @@ def main(argv = None):
   if len(sys.argv) == 1 or isGuiArgument or not(isExportArgument or isExpressionProvided):
     #If no arguments are supplied - GUI
     if isExpressionProvided:
-      tArgs.expression = args.expression
+      tArgs.expression = args.expression # TODO: Deprecated
     sys.stderr.write("Starting GUI mode\n")
     tArgs.isGUI = True
     
@@ -2118,7 +2222,7 @@ def main(argv = None):
     # rowSize, colSize, rowStart, colStart
     menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass)
     #Start the GUI input thread
-    window = WindowManager(tArgs, scr, menu)
+    window = WindowManager(tArgs, scr, tArgs.expression, menu) # TODO: tArgs.expression will be replaced with a file descriptor.
   except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
     curses.curs_set(1) # Re-enable the actual cursor
     curses.echo()
