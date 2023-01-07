@@ -128,6 +128,7 @@ class BasicEditor:
     self.oldCursorPos = self.cursorPos
     self.oldHighlightPos = self.cursorPos
     self.shape = box # Public - holds the shape / dimensions of this window
+    self.cursorHidden = False
     
   def highlightChar(self, p : Point):
     self.oldHighlightPos = p
@@ -139,7 +140,13 @@ class BasicEditor:
 
   # Hides the cursor temporarily, until it is moved.
   def hideCursor(self):
+    self.cursorHidden = True
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_NORMAL) # Un-highlight new position
+    self.win.refresh()
+
+  def showCursor(self):
+    self.cursorHidden = False
+    self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight cursor position
     self.win.refresh()
 
   def setCursorPos(self, p: Point):
@@ -191,13 +198,253 @@ class BasicEditor:
     self.restoreLastHighlight()
 
     # Redraw cursor
-    self.win.chgat(self.oldCursorPos.row, self.oldCursorPos.col, 1, curses.A_NORMAL) # Unhighlight old position
-    self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight new position
+    if self.cursorHidden == False:
+      self.win.chgat(self.oldCursorPos.row, self.oldCursorPos.col, 1, curses.A_NORMAL) # Unhighlight old position
+      self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight new position
     self.oldCursorPos = self.cursorPos
-
+    self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight new position
     self.win.refresh()
 
 
+class LineEditor(BasicEditor):
+  def __init__(self, box: Box):
+    super(LineEditor, self).__init__(box)
+    self.text = []
+    self.scrollOffset = 0
+   
+  def getPos(self):
+    return Point(col = self.cursorPos.col + self.scrollOffset, row = self.cursorPos.row)
+
+  # Gets the complete text
+  def getText(self):
+    #return ''.join(self.charsBefore) + self.getWinText() + ''.join(self.charsAfter)
+    return ''.join(self.text)
+
+  def setText(self, text):
+    self.text = list(text)
+    self.setCursorPos(self.cursorPos.withCol(min(self.shape.colSize - 1, len(text))) )
+    #start = max(0, len(text) - self.shape.colSize
+    #self.scrollOffset = start
+    #self.win.addstr(0, 0, text[start:len(text)-1])
+    self.scrollOffset = 0
+    self.win.addstr(0, 0, ''.join(self.text[0: min(self.shape.colSize, len(self.text))]))
+    self.refresh()
+
+   # Scrolls left one space
+  def scrollLeft(self):
+    #self.goRight()
+    #self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
+    #self.win.insch(0, 0, self.charsBefore.pop()) # Make visible new closest leftmost char, move right chars over
+    ###self.win.insch(0, 0, self.text[self.scrollOffset-1])
+    self.scrollOffset = self.scrollOffset - 1
+  
+  # Scrolls right one space
+  def scrollRight(self):
+    #self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
+    #self.goLeft()
+    #self.charsBefore.append(self.win.getch(0, 0)) # Leftmost char becomes invisible
+    ###self.win.delch(0, 0) # Move all chars left 1
+    #self.insCharAt(self.shape.colSize - 1, self.text[self.scrollOffset + self.shape.colSize-1]) # New rightmost char becomes visible
+    self.scrollOffset = self.scrollOffset + 1
+
+  # Moves the cursor left, scrolling as needed. Checks if outside of text bounds
+  def goLeft(self):
+    if self.cursorPos.col <= 0 and self.scrollOffset <= 0:
+      return False
+    elif self.cursorPos.col <= 0:
+      self.scrollLeft()
+    elif self.scrollOffset + self.cursorPos.col > 0: #not( len(self.charsBefore) == 0 and self.cursorPos.col <= 0 ): # If not at the very beginning
+      self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
+    #else:
+    #  return True
+    return True
+    
+  # Moves the cursor right, scrolling as needed. Checks if outside of text bounds.
+  def goRight(self):
+    #mrr = self.getWinText()
+    #moo = len(self.getWinText())
+    #pass
+    if self.cursorPos.col + self.scrollOffset < len(self.text):
+      if(self.cursorPos.col >= self.shape.colSize - 1): # If off right edge
+        self.scrollRight()
+      else:
+        self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
+    else: 
+      
+    #elif len(self.charsAfter) != 0: # If 
+    #elif not(len(self.charsBefore) == 0 and self.cursorPos.col >= len(self.getWinText())): # If not at the very end when the length of text doesn't exceed its width
+   
+      return False
+    return True
+
+  def refresh(self):
+    self.win.clear()
+    text = self.text[self.scrollOffset : min(self.scrollOffset + self.shape.colSize-1, len(self.text))]
+    self.win.addstr(0, 0, ''.join(text))
+    super().refresh()
+
+  # Alias for move... inch, since mvinch is not supported in Python Curses
+  # To make it even easier, we only need the text on one line
+  def charAt(self, col):
+    self.win.move(0, col)
+    return self.win.inch()
+  def insCharAt(self, col, ch): # Insert character
+    self.win.move(0, col)
+    return self.win.insch(ch)
+    
+
+  def insert(self, ch):
+    self.text.insert(self.scrollOffset + self.cursorPos.col, chr(ch))
+    #self.charsAfter.append(self.charAt(self.shape.colSize - 1)) # Rightmost char gets pushed off the end
+    ###self.insCharAt(self.cursorPos.col, ch)
+    self.goRight()
+
+  def backspace(self):
+    if self.cursorPos.col <= 0 and self.scrollOffset <= 0:
+      return # TODO: Why doesn't the goLeft() return value actually get it right?????!!!!!!
+    #self.goLeft()
+    #if True:
+    if self.goLeft():
+      ###self.win.delch(0, self.cursorPos.col)
+      self.text.pop(self.scrollOffset + self.cursorPos.col)
+      self.refresh()
+    else:
+      return False
+    return True
+
+  def type(self, ch):
+    retVal = True
+    if ch == curses.KEY_LEFT:
+      retVal = self.goLeft()
+      #retVal = self.scrollLeft()
+    elif ch == curses.KEY_RIGHT:
+      retVal = self.goRight()
+      #retVal = self.scrollRight()
+    elif ch == curses.KEY_BACKSPACE:
+      retVal = self.backspace()
+    #elif ch == 32: # Space
+    #  self.insert(chr(2063)) # Insert special replacement character because spaces are used as the background
+    else:
+      self.insert(ch)
+    self.refresh()
+    return retVal
+
+
+
+# A simplified, low-memory editor that can only edit a single line. Scrolls horizontally as the edges of the cursor go beyond its sides.
+# Even if you make its height greater than 1, only the first line will be used.
+class LineEditorOld(BasicEditor):
+  def __init__(self, box: Box):
+    super(LineEditorOld, self).__init__(box)
+    self.charsBefore = []
+    self.charsAfter = []
+   
+  # Gets the complete text
+  def getText(self):
+    return ''.join(self.charsBefore) + self.getWinText() + ''.join(self.charsAfter)
+
+  # Gets the text in the current window
+  def getWinText(self):
+    # Build text the slow way, because the below line occasionally hangs (perhaps it's because its not in the main thread?)
+    #text = self.win.getstr().decode(encoding="utf-8")
+    #text = []
+    self.win.move(0,0)
+    text = self.win.instr().decode(encoding="utf-8").replace(chr(32), '').replace(chr(2063), chr(32)) # Remove spaces, then replace the special replacement char with spaces
+    #for t in range(0, self.shape.colSize-1):
+    #  self.win.move(0, t)
+    #  text.append(chr(self.win.inch()))
+    #text = ''.join(text)
+    #self.infoPad.updateInfo(text + '\n' + str(len(text)), True)
+    #self.infoPad.updateInfo("MOOOOO: " + str(ord(text[self.shape.colSize-2])), True)
+    #print(text)
+    return text
+
+  def setText(self, text):
+    self.setCursorPos(self.cursorPos.withCol(min(self.shape.colSize - 1, len(text))) )
+    self.win.addstr(0, 0, text[max(0, len(text) - self.shape.colSize):len(text)])
+    self.charsAfter = list(text[len(text) - self.shape.colSize + 1 : len(text)])
+    self.refresh()
+
+   # Scrolls left one space
+  def scrollLeft(self):
+    #self.goRight()
+    #self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
+    self.win.insch(0, 0, self.charsBefore.pop()) # Make visible new closest leftmost char, move right chars over
+  
+  # Scrolls right one space
+  def scrollRight(self):
+    #self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
+    #self.goLeft()
+    self.charsBefore.append(self.win.getch(0, 0)) # Leftmost char becomes invisible
+    self.win.delch(0, 0) # Move all chars left 1
+    self.insCharAt(self.shape.colSize - 1, self.charsAfter.pop()) # New rightmost char becomes visible
+
+  # Moves the cursor left, scrolling as needed. Checks if outside of text bounds
+  def goLeft(self):
+    if self.cursorPos.col <= 0:
+        self.scrollLeft()
+    elif not( len(self.charsBefore) == 0 and self.cursorPos.col <= 0 ): # If not at the very beginning
+      self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
+    else:
+      return False
+    return True
+    
+  # Moves the cursor right, scrolling as needed. Checks if outside of text bounds.
+  def goRight(self):
+    #mrr = self.getWinText()
+    #moo = len(self.getWinText())
+    #pass
+    if(self.cursorPos.col >= self.shape.colSize - 1): # If off right edge
+      self.scrollRight()
+    #elif len(self.charsAfter) != 0: # If 
+    elif not(len(self.charsBefore) == 0 and self.cursorPos.col >= len(self.getWinText())): # If not at the very end when the length of text doesn't exceed its width
+    #elif True:
+      self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
+    else:
+      return False
+    return True
+
+  def refresh(self):
+    super().refresh()
+
+  # Alias for move... inch, since mvinch is not supported in Python Curses
+  # To make it even easier, we only need the text on one line
+  def charAt(self, col):
+    self.win.move(0, col)
+    return self.win.inch()
+  def insCharAt(self, col, ch): # Insert character
+    self.win.move(0, col)
+    return self.win.insch(ch)
+    
+
+  def insert(self, ch):
+    self.charsAfter.append(self.charAt(self.shape.colSize - 1)) # Rightmost char gets pushed off the end
+    self.insCharAt(self.cursorPos.col, ch)
+    self.goRight()
+
+  def backspace(self):
+    if self.goLeft():
+      self.win.delch(y = 0, x = self.cursorPos.col - 1)
+    else:
+      return False
+    return True
+
+  def type(self, ch):
+    retVal = True
+    if ch == curses.KEY_LEFT:
+      #retVal = self.goLeft()
+      retVal = self.scrollLeft()
+    elif ch == curses.KEY_RIGHT:
+      #retVal = self.goRight()
+      retVal = self.scrollRight()
+    elif ch == curses.KEY_BACKSPACE:
+      retVal = self.backspace()
+    elif ch == 32: # Space
+      self.insert(chr(2063)) # Insert special replacement character because spaces are used as the background
+    else:
+      self.insert(ch)
+    self.refresh()
+    return retVal
 
 
 # A full text editor that supports newlines and scrolling
@@ -466,7 +713,6 @@ class TextEditor(BasicEditor):
     for i in range(len(oldTail)): # Delete tail of original line
       self.data[self.dataPos.row].pop(self.dataPos.col)
     self.refresh() # Refresh optimization will not otherwise see it, as it is switching lines
-    self.hideCursor()
     self.mvLine(1) # Go to next line
     self.setCursorPos(self.getLineCurPos().withCol(0)) # Go to beginning of line
     self.dataPos = self.dataPos.withCol(0) # Go to beginning of line in data pointer
@@ -874,6 +1120,8 @@ class Evaluator:
   def __init__(self, text, symbolTable = vars(math)):
     self.symbolTable = symbolTable
     self.text = text
+    self.mem = {} # User-defined persistent memory dictionary. Variables set and modified here will remain persistent across calculations
+    symbolTable['mem'] = self.mem
     symbolTable['x'] = 0
     symbolTable["main"] = 0
     self.prog = compile(text, '<string>', 'exec', optimize=2)
@@ -899,7 +1147,7 @@ class WindowManager:
     rows, cols = self.scr.getmaxyx()
     #Initialize text editor
     self.editor = TextEditor(Box(rowSize = rows - 6, colSize = cols, rowStart = 1, colStart = 0))
-    
+
     # Tell the menu that this is the main window
     self.menu.setMainWindow(self.editor.win)
   
@@ -910,7 +1158,6 @@ class WindowManager:
     self.menu.setInfoDisplay(self.infoPad) # Give the menu an infoPad
     # so it can display its own information on it.
     
-    self.editor.infoPad = self.infoPad ######## TEMP ##########
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
     self.thread.start()
     self.editor.setText("main = " + initialExpr)
@@ -935,12 +1182,11 @@ class WindowManager:
             break
           
           
-        # Only runs once. This was due to a strange bug where it didn't seem to work before this loop. TODO: Please fix this...
+        # Only runs once. This was due to a strange bug where it didn't seem to work before this loop. TODO: Please fix this... This is bad...
         if startUp == True:
           startUp = False
           self.menu.refreshAll()
           self.editor.refresh()
-          self.editor.infoPad = self.infoPad ###### TEMP; For debugging ######
           self.menu.title.refresh()
           
         
@@ -953,24 +1199,26 @@ class WindowManager:
           if menuFocus == True:
             self.menu.type(ch)
           elif settingFocus == False:
-            p = self.editor.getPos()
-            self.infoPad.updateInfo(f"Line: {p.row}, Col: {p.col}")
             # Type on the inputPad, verifying each time
 ###            self.infoPad.updateInfo("Wait...")                # Disabled for testing
             #with lock:
               # Don't update the progress bar while typing. This helps a problem where the terminal cursor may sporadically jump (wrongly) to the progess bar.
             #  self.menu.getProgressBar().temporaryPause = True
+            self.editor.win.move(self.editor.cursorPos.row, self.editor.cursorPos.col)
             if self.editor.type(ch):
               text = self.editor.getText()
 ###              self.infoPad.updateInfo("Verifying...")
+              p = self.editor.getPos()
+              self.infoPad.updateInfo(f"Line: {p.row}, Col: {p.col}")
               try:
                 evaluator = Evaluator(text)
                 with tArgs.lock:
                   tArgs.evaluator = evaluator
-              except Exception as e:
+              except Exception as e: # Display exceptions to the user
                 #self.infoPad.updateInfo(str(["e.%s = %r" % (attr, getattr(e, attr)) for attr in dir(e)]))
                 self.infoPad.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
                 self.editor.highlightRange(Point(row = e.lineno, col = e.offset), Point(row = e.end_lineno, col = e.end_offset))
+            
               #except:
               #  type, value, traceback = sys.exc_info()
               #  line = traceback.tb_lineno
@@ -1008,7 +1256,6 @@ class WindowManager:
 #                    self.tArgs.expression = "0"
 ###                    self.infoPad.updateInfo("")
               continue
-              
 
                     
             #with lock:
@@ -1022,16 +1269,18 @@ class WindowManager:
               self.menu.setMainWindow(self.editor.win)
               #self.menu.getProgressBar().temporaryPause = False
               self.menu.focusedWindow.onHoverLeave()
+              self.menu.focusedWindow.hideCursor()
             self.infoPad.updateInfo("")
             self.menu.title.refresh() # Good time to refresh the title?
+            self.editor.showCursor()
             self.editor.refresh() # Set cursor back to typing pad
           elif ch == curses.KEY_DOWN:
             menuFocus = True
             settingFocus = True
             self.editor.hideCursor()
-            self.menu.focusedWindow.onHoverEnter()
-            if self.menu.editing:
-              self.menu.focusedWindow.onBeginEdit()
+            self.infoPad.updateInfo(self.menu.focusedWindow.onHoverEnter())
+            #if self.menu.editing:
+            #  self.menu.focusedWindow.onBeginEdit() # Resuming editing is deprecated
             self.menu.refreshTitleMessage()
           
           settingFocus = False
@@ -1064,7 +1313,7 @@ class BasicMenuItem:
   def __init__(self, shape: Box):
     self.shape = shape
     self.win = curses.newwin(shape.rowSize, shape.colSize, shape.rowStart, shape.colStart)
-    
+    #self.hovering = False
     #self.toolTip = "Tool Tip"
     #self.hoverMsg = "Hover Message"
     #self.actionMsg = "Action Message"
@@ -1076,9 +1325,16 @@ class BasicMenuItem:
 
  # Calls refresh() on the window object
  # this must be lightweight, as it may be called often.
-  def refresh(self):
+  def refresh(self): 
     self.win.refresh()
-    
+
+  # Standard hooks to hide and show the cursor, if your widget has one.
+  def hideCursor(self):
+    pass
+
+  def showCursor(self):
+    pass
+
   def displayText(self, text):
     self.win.erase()
     self.win.addstr(0, 0, text)
@@ -1101,6 +1357,7 @@ class BasicMenuItem:
   
   # Called when UIManager tells the cursor to leave your item
   def onHoverLeave(self):
+    self.hovering = False
     for row in range(0, self.shape.rowSize):
       self.win.chgat(0, row, self.shape.colSize, curses.A_NORMAL)
     curses.use_default_colors()
@@ -1132,14 +1389,15 @@ class BasicMenuItem:
 
 
 # A button to export audio as a WAV file, assuming you have the "wave" module installed.
-class exportButton(InputPad, BasicMenuItem):
+class exportButton(LineEditor, BasicMenuItem):
   def __init__(self, shape: Box, tArgs, progressBar):
     super().__init__(shape)
     self.tArgs = tArgs
     self.infoPad = None
     self.progressBar = progressBar
     self.setText("Export Audio")
-    self.refresh()
+    self.hideCursor()
+
 
   def getDisplayName(self):
     return "Export Button"
@@ -1155,10 +1413,12 @@ class exportButton(InputPad, BasicMenuItem):
     self.infoPad = infoPad
     
   def onHoverEnter(self):
+    self.hideCursor()
     super().onHoverEnter()
     return "Press enter to save a recording as a WAV file."
 
   def onHoverLeave(self):
+    self.showCursor()
     self.setText("Export Audio")
     super().onHoverLeave()
     
@@ -1285,13 +1545,14 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
 
 # A menu item in the format "name=..." that types like an InputPad
 # this allows setting variables, etc in a typing-based way
-class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and BasicMenuItem classes
+class NamedMenuSetting(LineEditor, BasicMenuItem): # Extend the InputPad and BasicMenuItem classes
   def __init__(self, shape: Box, name):
     super().__init__(shape)
     self.name = name
     self.setText(name + "=")
     self.lastValue = "0"
-    self.refresh()
+    self.hideCursor()
+    #self.refresh()
   
   def updateValue(self, value):
     self.setText(self.name + "=" + str(value))
@@ -1301,8 +1562,13 @@ class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and Basic
   def onHoverLeave(self):
     super().onHoverLeave()
     self.updateValue(self.lastValue)
-    self.refresh()
+    self.showCursor()
+    #self.refresh()
   
+  def onHoverEnter(self):
+    self.hideCursor()
+    return super().onHoverEnter()
+
   def getValue(self):
     index = len(str(self.name + "="))
     text = self.getText()
@@ -1312,8 +1578,11 @@ class NamedMenuSetting(InputPad, BasicMenuItem): # Extend the InputPad and Basic
   # Override InputPad goLeft() method
   def goLeft(self):
     # Don't allow going to the left of the '='
-    if self.curCol > len(str(self.name + "=")):
-      super().goLeft()
+    ##if self.curCol > len(str(self.name + "=")):
+    if self.getPos().col > len(str(self.name + "=")):
+      return super().goLeft()
+    else:
+      return False
   
   # Override InputPad type method
   def type(self, ch):
@@ -1778,13 +2047,16 @@ class UIManager:
     if self.infoPad:
       self.infoPad.setMainWindow(window)
     
-  # Set the infoPad in the most godawful way in order for it to display information
+  # Set the infoPad in the most godawful way to allow it to display information
   def setInfoDisplay(self, infoPad):
     self.infoPad = infoPad
     self.settingPads[4].setInfoDisplay(infoPad) # Give to exportButton
+
+    self.settingPads[1].infoPad = self.infoPad ##### TEMP #####
   
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
+  # TODO: This is a crime...
   def refreshAll(self): # TODO: Wait... Don't I give each object a tArgs anyways??? This is... despicable...
     self.settingPads[0].updateValue(0)
     self.settingPads[1].updateValue(self.tArgs.start)
@@ -1793,6 +2065,7 @@ class UIManager:
     self.settingPads[5].updateValue(self.tArgs.step)
     for win in self.settingPads:
       win.refresh()
+      win.hideCursor()
   
   # Retrieves the ProgressBar object in the most godawful way...
   def getProgressBar(self):
@@ -1827,6 +2100,7 @@ class UIManager:
     # Switch between menu items
     if self.editing == False and (ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT):
       self.focusedWindow.onHoverLeave()
+      self.focusedWindow.hideCursor()
       if ch == curses.KEY_LEFT:
         if self.focusedWindowIndex > 0:
           self.focusedWindowIndex = self.focusedWindowIndex - 1
@@ -1839,11 +2113,11 @@ class UIManager:
           self.focusedWindowIndex = 0
       self.focusedWindow = self.settingPads[self.focusedWindowIndex]
       msg = self.focusedWindow.onHoverEnter()
-      self.setMainWindow(self.focusedWindow)
+      #self.setMainWindow(self.focusedWindow)
       self.infoPad.updateInfo(msg)
       return
       
-    self.setMainWindow(self.focusedWindow)
+    #self.setMainWindow(self.focusedWindow)
     
     # Function macro to end editing ; TODO: Make this not horribly inline with code?
     def endEdit():
@@ -1865,7 +2139,7 @@ class UIManager:
         endEdit()
       self.focusedWindow.refresh()
     
-    # Toggle editing on and off and handle onHoverEntering (highlighting)
+    # Toggle editing on and off and handle highlighting (with onHoverEnter)
     if ch == curses.KEY_ENTER:
       if self.editing == False:
         beginEdit()
