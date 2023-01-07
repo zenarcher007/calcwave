@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.5.0"
+version = "1.5.1"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -149,6 +149,12 @@ class BasicEditor:
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight cursor position
     self.win.refresh()
 
+  def onFocus(self):
+    self.showCursor()
+
+  def onUnfocus(self):
+    self.hideCursor()
+
   def setCursorPos(self, p: Point):
     self.win.move(p.row, p.col)
     self.cursorPos = p
@@ -217,34 +223,19 @@ class LineEditor(BasicEditor):
 
   # Gets the complete text
   def getText(self):
-    #return ''.join(self.charsBefore) + self.getWinText() + ''.join(self.charsAfter)
     return ''.join(self.text)
 
   def setText(self, text):
     self.text = list(text)
-    self.setCursorPos(self.cursorPos.withCol(min(self.shape.colSize - 1, len(text))) )
-    #start = max(0, len(text) - self.shape.colSize
-    #self.scrollOffset = start
-    #self.win.addstr(0, 0, text[start:len(text)-1])
-    self.scrollOffset = 0
-    self.win.addstr(0, 0, ''.join(self.text[0: min(self.shape.colSize, len(self.text))]))
+    self.goToBeginning()
     self.refresh()
 
    # Scrolls left one space
   def scrollLeft(self):
-    #self.goRight()
-    #self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
-    #self.win.insch(0, 0, self.charsBefore.pop()) # Make visible new closest leftmost char, move right chars over
-    ###self.win.insch(0, 0, self.text[self.scrollOffset-1])
     self.scrollOffset = self.scrollOffset - 1
   
   # Scrolls right one space
   def scrollRight(self):
-    #self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
-    #self.goLeft()
-    #self.charsBefore.append(self.win.getch(0, 0)) # Leftmost char becomes invisible
-    ###self.win.delch(0, 0) # Move all chars left 1
-    #self.insCharAt(self.shape.colSize - 1, self.text[self.scrollOffset + self.shape.colSize-1]) # New rightmost char becomes visible
     self.scrollOffset = self.scrollOffset + 1
 
   # Moves the cursor left, scrolling as needed. Checks if outside of text bounds
@@ -253,45 +244,38 @@ class LineEditor(BasicEditor):
       return False
     elif self.cursorPos.col <= 0:
       self.scrollLeft()
-    elif self.scrollOffset + self.cursorPos.col > 0: #not( len(self.charsBefore) == 0 and self.cursorPos.col <= 0 ): # If not at the very beginning
+    elif self.scrollOffset + self.cursorPos.col > 0: # If not at the very beginning
       self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
-    #else:
-    #  return True
     return True
     
   # Moves the cursor right, scrolling as needed. Checks if outside of text bounds.
   def goRight(self):
-    #mrr = self.getWinText()
-    #moo = len(self.getWinText())
-    #pass
     if self.cursorPos.col + self.scrollOffset < len(self.text):
       if(self.cursorPos.col >= self.shape.colSize - 1): # If off right edge
         self.scrollRight()
       else:
         self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
     else: 
-      
-    #elif len(self.charsAfter) != 0: # If 
-    #elif not(len(self.charsBefore) == 0 and self.cursorPos.col >= len(self.getWinText())): # If not at the very end when the length of text doesn't exceed its width
-   
       return False
     return True
+  
+  # Goes to the beginning of the text, with the cursor at 0.
+  def goToBeginning(self):
+    self.setCursorPos(self.cursorPos.withCol(0))
+    self.scrollOffset = 0
+    self.refresh()
+  
+  # Sets the cursor at the end, and puts the scroll window in view.
+  def goToEnd(self):
+    self.setCursorPos( self.cursorPos.withCol(min(len(self.text), self.shape.colSize-1)))
+    self.scrollOffset = max(0, len(self.text) - self.shape.colSize)
+    self.refresh
 
   def refresh(self):
     self.win.clear()
     text = self.text[self.scrollOffset : min(self.scrollOffset + self.shape.colSize-1, len(self.text))]
     self.win.addstr(0, 0, ''.join(text))
     super().refresh()
-
-  # Alias for move... inch, since mvinch is not supported in Python Curses
-  # To make it even easier, we only need the text on one line
-  def charAt(self, col):
-    self.win.move(0, col)
-    return self.win.inch()
-  def insCharAt(self, col, ch): # Insert character
-    self.win.move(0, col)
-    return self.win.insch(ch)
-    
 
   def insert(self, ch):
     self.text.insert(self.scrollOffset + self.cursorPos.col, chr(ch))
@@ -316,135 +300,15 @@ class LineEditor(BasicEditor):
     retVal = True
     if ch == curses.KEY_LEFT:
       retVal = self.goLeft()
-      #retVal = self.scrollLeft()
     elif ch == curses.KEY_RIGHT:
       retVal = self.goRight()
-      #retVal = self.scrollRight()
     elif ch == curses.KEY_BACKSPACE:
       retVal = self.backspace()
-    #elif ch == 32: # Space
-    #  self.insert(chr(2063)) # Insert special replacement character because spaces are used as the background
     else:
       self.insert(ch)
     self.refresh()
     return retVal
 
-
-
-# A simplified, low-memory editor that can only edit a single line. Scrolls horizontally as the edges of the cursor go beyond its sides.
-# Even if you make its height greater than 1, only the first line will be used.
-class LineEditorOld(BasicEditor):
-  def __init__(self, box: Box):
-    super(LineEditorOld, self).__init__(box)
-    self.charsBefore = []
-    self.charsAfter = []
-   
-  # Gets the complete text
-  def getText(self):
-    return ''.join(self.charsBefore) + self.getWinText() + ''.join(self.charsAfter)
-
-  # Gets the text in the current window
-  def getWinText(self):
-    # Build text the slow way, because the below line occasionally hangs (perhaps it's because its not in the main thread?)
-    #text = self.win.getstr().decode(encoding="utf-8")
-    #text = []
-    self.win.move(0,0)
-    text = self.win.instr().decode(encoding="utf-8").replace(chr(32), '').replace(chr(2063), chr(32)) # Remove spaces, then replace the special replacement char with spaces
-    #for t in range(0, self.shape.colSize-1):
-    #  self.win.move(0, t)
-    #  text.append(chr(self.win.inch()))
-    #text = ''.join(text)
-    #self.infoPad.updateInfo(text + '\n' + str(len(text)), True)
-    #self.infoPad.updateInfo("MOOOOO: " + str(ord(text[self.shape.colSize-2])), True)
-    #print(text)
-    return text
-
-  def setText(self, text):
-    self.setCursorPos(self.cursorPos.withCol(min(self.shape.colSize - 1, len(text))) )
-    self.win.addstr(0, 0, text[max(0, len(text) - self.shape.colSize):len(text)])
-    self.charsAfter = list(text[len(text) - self.shape.colSize + 1 : len(text)])
-    self.refresh()
-
-   # Scrolls left one space
-  def scrollLeft(self):
-    #self.goRight()
-    #self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
-    self.win.insch(0, 0, self.charsBefore.pop()) # Make visible new closest leftmost char, move right chars over
-  
-  # Scrolls right one space
-  def scrollRight(self):
-    #self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
-    #self.goLeft()
-    self.charsBefore.append(self.win.getch(0, 0)) # Leftmost char becomes invisible
-    self.win.delch(0, 0) # Move all chars left 1
-    self.insCharAt(self.shape.colSize - 1, self.charsAfter.pop()) # New rightmost char becomes visible
-
-  # Moves the cursor left, scrolling as needed. Checks if outside of text bounds
-  def goLeft(self):
-    if self.cursorPos.col <= 0:
-        self.scrollLeft()
-    elif not( len(self.charsBefore) == 0 and self.cursorPos.col <= 0 ): # If not at the very beginning
-      self.setCursorPos(self.cursorPos.relative(cols = -1, rows = 0))
-    else:
-      return False
-    return True
-    
-  # Moves the cursor right, scrolling as needed. Checks if outside of text bounds.
-  def goRight(self):
-    #mrr = self.getWinText()
-    #moo = len(self.getWinText())
-    #pass
-    if(self.cursorPos.col >= self.shape.colSize - 1): # If off right edge
-      self.scrollRight()
-    #elif len(self.charsAfter) != 0: # If 
-    elif not(len(self.charsBefore) == 0 and self.cursorPos.col >= len(self.getWinText())): # If not at the very end when the length of text doesn't exceed its width
-    #elif True:
-      self.setCursorPos(self.cursorPos.relative(cols = 1, rows = 0))
-    else:
-      return False
-    return True
-
-  def refresh(self):
-    super().refresh()
-
-  # Alias for move... inch, since mvinch is not supported in Python Curses
-  # To make it even easier, we only need the text on one line
-  def charAt(self, col):
-    self.win.move(0, col)
-    return self.win.inch()
-  def insCharAt(self, col, ch): # Insert character
-    self.win.move(0, col)
-    return self.win.insch(ch)
-    
-
-  def insert(self, ch):
-    self.charsAfter.append(self.charAt(self.shape.colSize - 1)) # Rightmost char gets pushed off the end
-    self.insCharAt(self.cursorPos.col, ch)
-    self.goRight()
-
-  def backspace(self):
-    if self.goLeft():
-      self.win.delch(y = 0, x = self.cursorPos.col - 1)
-    else:
-      return False
-    return True
-
-  def type(self, ch):
-    retVal = True
-    if ch == curses.KEY_LEFT:
-      #retVal = self.goLeft()
-      retVal = self.scrollLeft()
-    elif ch == curses.KEY_RIGHT:
-      #retVal = self.goRight()
-      retVal = self.scrollRight()
-    elif ch == curses.KEY_BACKSPACE:
-      retVal = self.backspace()
-    elif ch == 32: # Space
-      self.insert(chr(2063)) # Insert special replacement character because spaces are used as the background
-    else:
-      self.insert(ch)
-    self.refresh()
-    return retVal
 
 
 # A full text editor that supports newlines and scrolling
@@ -601,6 +465,8 @@ class TextEditor(BasicEditor):
   # TODO: Find just the first screen pos, and then use the lengths of its text to iterate?
   def chattrRange(self, p1 : Point, p2: Point, attribute):
     begin = self.findScreenPos(p1)
+    if not begin: # If off screen
+      return
     cursorRow = begin.row
     dataPt = begin.withCol(0)
     while cursorRow < self.shape.rowSize and dataPt.row < len(self.data):
@@ -1120,25 +986,31 @@ class Evaluator:
   def __init__(self, text, symbolTable = vars(math)):
     self.symbolTable = symbolTable
     self.text = text
-    self.mem = {} # User-defined persistent memory dictionary. Variables set and modified here will remain persistent across calculations
-    symbolTable['mem'] = self.mem
+    symbolTable['log'] = None
     symbolTable['x'] = 0
     symbolTable["main"] = 0
     self.prog = compile(text, '<string>', 'exec', optimize=2)
 
+  # Gets the last logged value, or the last computed value if none was specified
+  def getLog(self):
+    log = self.symbolTable['log']
+    if log is None:
+      return str(self.symbolTable['main'])
+    else:
+      return str(self.symbolTable['log'])
+
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
-    self.symbolTable['x'] = x
-    exec(self.prog, self.symbolTable, self.symbolTable)
-    return self.symbolTable["main"]
+    self.symbolTable['x'] = x # Add x to the internal symbol table
+    exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
+    return self.symbolTable["main"] # Return result
 
 
 # Handles GUI
 class WindowManager:
-  def __init__(self, tArgs, scr, initialExpr, menu):
+  def __init__(self, tArgs, scr, initialExpr, audioClass):
     self.tArgs = tArgs
     self.scr = scr
-    self.menu = menu
     
     self.scr.keypad(True)
     self.scr.nodelay(True)
@@ -1147,147 +1019,60 @@ class WindowManager:
     rows, cols = self.scr.getmaxyx()
     #Initialize text editor
     self.editor = TextEditor(Box(rowSize = rows - 6, colSize = cols, rowStart = 1, colStart = 0))
-
-    # Tell the menu that this is the main window
-    self.menu.setMainWindow(self.editor.win)
   
     #Initialize info display window
-    self.infoPad = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
-    self.infoPad.setMainWindow(self.editor.win) # So it will know
-    # what window to return the cursor to after it updates
-    self.menu.setInfoDisplay(self.infoPad) # Give the menu an infoPad
-    # so it can display its own information on it.
+    self.infoDisplay = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
+    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass, self.infoDisplay)
     
-    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, menu), daemon=True)
+    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu), daemon=True)
     self.thread.start()
     self.editor.setText("main = " + initialExpr)
     
   def windowThread(self, tArgs, scr, menu):
-    lock = threading.Lock()
-    
-    oldTime = 0
-    menuFocus = False
-    settingFocus = False
-    startUp=True
+    self.scr.getch()
+    self.scr.nodelay(0) # Turn delay mode on, such that curses will now wait for new keypresses on calls to getch()
+    # Draw graphics
+    self.menu.refreshAll()
+    self.editor.refresh()
+    self.menu.title.refresh()
+
+    self.focused = self.editor
     try:
       while self.tArgs.shutdown is False:
-        #updateInfo(infoWin, self.pad, self.scr, "")
         ch = self.scr.getch()
-        
-        
-        if ch == 27 and menuFocus == False: # Escape key
-          with lock:
-            self.infoPad.updateInfo("ESC recieved. Shutting down...")
+
+        if ch == 27 and self.focused != self.menu: # Escape key
+          self.infoDisplay.updateInfo("ESC recieved. Shutting down...")
+          with self.tArgs.lock:
             self.tArgs.shutdown = True
-            break
-          
-          
-        # Only runs once. This was due to a strange bug where it didn't seem to work before this loop. TODO: Please fix this... This is bad...
-        if startUp == True:
-          startUp = False
-          self.menu.refreshAll()
-          self.editor.refresh()
-          self.menu.title.refresh()
-          
+          break
+
+        successful = self.focused.type(ch)
+        if successful and self.focused == self.editor:
+          # Display cursor position
+          text = self.editor.getText()
+          p = self.editor.getPos()
+          self.infoDisplay.updateInfo(f"Line: {p.row}, Col: {p.col}")
+          try:
+            evaluator = Evaluator(text) # Compile on-screen code
+            with tArgs.lock:
+              tArgs.evaluator = evaluator # Install newly compiled code
+          except Exception as e:
+            # Display exceptions to the user
+            self.infoDisplay.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
+            self.editor.highlightRange(Point(row = e.lineno, col = e.offset), Point(row = e.end_lineno, col = e.end_offset))
+          continue
         
-        if ch != -1:
-          oldTime = time.time()
-
-          # Switch between menu and inputPad with the arrow keys
-          
-          
-          if menuFocus == True:
-            self.menu.type(ch)
-          elif settingFocus == False:
-            # Type on the inputPad, verifying each time
-###            self.infoPad.updateInfo("Wait...")                # Disabled for testing
-            #with lock:
-              # Don't update the progress bar while typing. This helps a problem where the terminal cursor may sporadically jump (wrongly) to the progess bar.
-            #  self.menu.getProgressBar().temporaryPause = True
-            self.editor.win.move(self.editor.cursorPos.row, self.editor.cursorPos.col)
-            if self.editor.type(ch):
-              text = self.editor.getText()
-###              self.infoPad.updateInfo("Verifying...")
-              p = self.editor.getPos()
-              self.infoPad.updateInfo(f"Line: {p.row}, Col: {p.col}")
-              try:
-                evaluator = Evaluator(text)
-                with tArgs.lock:
-                  tArgs.evaluator = evaluator
-              except Exception as e: # Display exceptions to the user
-                #self.infoPad.updateInfo(str(["e.%s = %r" % (attr, getattr(e, attr)) for attr in dir(e)]))
-                self.infoPad.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
-                self.editor.highlightRange(Point(row = e.lineno, col = e.offset), Point(row = e.end_lineno, col = e.end_offset))
-            
-              #except:
-              #  type, value, traceback = sys.exc_info()
-              #  line = traceback.tb_lineno
-              #  lasti = traceback.tb_lasti
-              #  e = []
-              #  t = traceback
-              #  while t.tb_next:
-              #    e.append(t.tb_lineno)
-              #    t = t.tb_next
-              #  self.infoPad.updateInfo(f"{type.__name__} at line {line} {lasti}:  + {str(value)}\n{str(e)}")
-#              try: # Verify expression              # Verify disabled for now
-#                eval('lambda x: ' + text, tArgs.functionTable)
-#                with lock:
-#                  self.tArgs.expression = text # Update the expression for the audioThread
-###                self.infoPad.updateInfo("Playing...")
-#              except (SyntaxError, NameError, TypeError) as e:
-#                # Highlight problem character
-#                if len(e.args) == 2 and len(text) > 0:
-#                  error = str(e.args[1])
-#                  parseString = error.split(',', 3)
-#                  if len(parseString) >= 3:
-#                    column = int(parseString[2]) - 11
-#                    #x = self.pad.shape.colStart + column
-#                    #y = self.pad.shape.rowStart
-#                    #if x >= self.pad.shape.colStart and y >= self.pad.shape.rowStart:
-#                    ###xWidth = (self.pad.shape.colStart + self.pad.shape.colSize) - self.pad.shape.colStart+1
-#                    ###self.pad.highlightChar(Point(col = int(column / xWidth), row = column % xWidth))
-#                    ###self.pad.highlightChar(column)
-###                  self.infoPad.updateInfo(str(e.args[0]))
-#                else:
-#                  if len(text) > 0:
-#                    error = str(e.args)
-###                    self.infoPad.updateInfo(error)
-#                  else:
-#                    self.tArgs.expression = "0"
-###                    self.infoPad.updateInfo("")
-              continue
-
-                    
-            #with lock:
-            #  self.menu.getProgressBar().temporaryPause = False
-          
-          if ch == curses.KEY_UP and not self.menu.editing: # Don't remove focus from the menu while it's editing
-            menuFocus = False
-            settingFocus = True
-            with lock:
-              self.infoPad.setMainWindow(self.editor.win)
-              self.menu.setMainWindow(self.editor.win)
-              #self.menu.getProgressBar().temporaryPause = False
-              self.menu.focusedWindow.onHoverLeave()
-              self.menu.focusedWindow.hideCursor()
-            self.infoPad.updateInfo("")
-            self.menu.title.refresh() # Good time to refresh the title?
-            self.editor.showCursor()
-            self.editor.refresh() # Set cursor back to typing pad
-          elif ch == curses.KEY_DOWN:
-            menuFocus = True
-            settingFocus = True
-            self.editor.hideCursor()
-            self.infoPad.updateInfo(self.menu.focusedWindow.onHoverEnter())
-            #if self.menu.editing:
-            #  self.menu.focusedWindow.onBeginEdit() # Resuming editing is deprecated
-            self.menu.refreshTitleMessage()
-          
-          settingFocus = False
-        else:
-          # Improve typing performance, but save CPU when not typing
-          if time.time() - oldTime > 0.5:
-            time.sleep(0.1)
+        # Switch between menu and inputPad with the arrow keys
+        if self.menu.isEditing(): continue # Don't remove focus from the menu while it's editing
+        if ch == curses.KEY_UP and not self.menu.isEditing(): 
+          self.focused.onUnfocus()
+          self.focused = self.editor
+          self.focused.onFocus()
+        elif ch == curses.KEY_DOWN:
+          self.focused.onUnfocus()
+          self.focused = self.menu
+          self.focused.onFocus()
           
     except (KeyboardInterrupt, SystemExit):
       pass
@@ -1390,10 +1175,10 @@ class BasicMenuItem:
 
 # A button to export audio as a WAV file, assuming you have the "wave" module installed.
 class exportButton(LineEditor, BasicMenuItem):
-  def __init__(self, shape: Box, tArgs, progressBar):
+  def __init__(self, shape: Box, tArgs, progressBar, infoDisplay):
     super().__init__(shape)
     self.tArgs = tArgs
-    self.infoPad = None
+    self.infoPad = infoDisplay
     self.progressBar = progressBar
     self.setText("Export Audio")
     self.hideCursor()
@@ -1408,10 +1193,7 @@ class exportButton(LineEditor, BasicMenuItem):
   def onBeginEdit(self):
       self.setText("") # Clear and allow you to enter the filename
       return "Please enter filename, and press enter to save. Any existing file will be overwritten."
-    
-  def setInfoDisplay(self, infoPad):
-    self.infoPad = infoPad
-    
+  
   def onHoverEnter(self):
     self.hideCursor()
     super().onHoverEnter()
@@ -1563,11 +1345,18 @@ class NamedMenuSetting(LineEditor, BasicMenuItem): # Extend the InputPad and Bas
     super().onHoverLeave()
     self.updateValue(self.lastValue)
     self.showCursor()
+    self.goToBeginning()
     #self.refresh()
   
   def onHoverEnter(self):
     self.hideCursor()
     return super().onHoverEnter()
+  
+  # Override BasicMenuItem's onBeginEdit()
+  def onBeginEdit(self):
+    ret = super().onBeginEdit()
+    self.goToEnd()
+    return ret
 
   def getValue(self):
     index = len(str(self.name + "="))
@@ -1704,7 +1493,6 @@ class endRangeMenuItem(NumericalMenuSetting):
 class stepMenuItem(NumericalMenuSetting):
   def __init__(self, shape: Box, name, tArgs):
     super().__init__(shape, name, "float")
-    self.lock = threading.Lock()
     self.tArgs = tArgs
 
   # Tooltip Message Definitions
@@ -1724,7 +1512,7 @@ class stepMenuItem(NumericalMenuSetting):
     else:
       self.updateValue(value)
       self.lastValue = str(value)
-      with self.lock:
+      with self.tArgs.lock:
         self.tArgs.step = value
     return "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.tArgs.rate) + "hz."
     
@@ -1735,14 +1523,14 @@ class stepMenuItem(NumericalMenuSetting):
 
 # A ProgressBar that displays the current position of AudioPlayer's range
 class ProgressBar(BasicMenuItem):
-  def __init__(self, shape: Box, audioClass, tArgs):
+  def __init__(self, shape: Box, audioClass, tArgs, infoDisplay):
     super().__init__(shape)
+    self.infoDisplay = infoDisplay
     self.lock = threading.Lock()
     self.audioClass = audioClass
     self.progressBarEnabled = True
     self.temporaryPause = False
     self.tArgs = tArgs
-    self.otherWindow = None
     
     # Start progress bar thread
     self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
@@ -1765,39 +1553,50 @@ class ProgressBar(BasicMenuItem):
     super().onHoverLeave()
     
   def type(self, ch):
-    with self.lock:
-      self.temporaryPause = False
+    #with self.lock:
+    self.temporaryPause = False # TODO: Deprecated
     # Handle left/right stepping
+    
+    blockWidth = self.tArgs.step
     if ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT:
       range = abs(self.tArgs.end - self.tArgs.start)
       blockWidth = int(range / self.shape.colSize)
       # Use bigger increments if not paused
-      if self.audioClass.paused == False:
+    if self.audioClass.isPaused() == False:
         blockWidth = blockWidth * 5
       
-      with self.lock:
-        index = self.audioClass.index
-        
-      if ch == curses.KEY_LEFT:
+    if ch == 32: # Space
+      self.audioClass.setPaused(not(self.audioClass.isPaused())) # Function includes a lock, and must be done separately
+      return
+    elif chr(ch) == 'v' or chr(ch) == 'V':
+      self.toggleVisibility()
+      return
+
+    with self.audioClass.getLock():
+      index = self.audioClass.index
+      if ch == ord('h'): # H and l can be used as alternative arrow keys to step through slowly
+        index = index - self.tArgs.step
+      elif ch == ord('l'):
+        index = index + self.tArgs.step
+      elif ch == curses.KEY_LEFT or ch == curses.KEY_SLEFT:
         index = index - blockWidth
-      elif ch == curses.KEY_RIGHT:
+      elif ch == curses.KEY_RIGHT or ch == curses.KEY_SRIGHT:
         index = index + blockWidth
-      # Limit between acceptable range
-      if index < self.tArgs.start:
+      if index < self.tArgs.start: # Limit between acceptable range
         index = self.tArgs.start
       elif index > self.tArgs.end:
         index = self.tArgs.end
-      # Write back to AudioPlayer
-      with self.lock:
-        self.audioClass.index = index
+      # Write back to audio player
+      self.audioClass.index = index
       self.updateIndex(index, self.tArgs.start, self.tArgs.end)
       
-    if ch == 32: # Space
-      with self.lock:
-        self.audioClass.setPaused(not(self.audioClass.paused))
+    
+    
+      
+    
+    
         
-    if chr(ch) == 'v' or chr(ch) == 'V':
-      self.toggleVisibility()
+    
   
   # Defines action to do when activated
   def doAction(self):
@@ -1820,14 +1619,6 @@ class ProgressBar(BasicMenuItem):
     self.win.erase()
     self.win.addstr(0, 0, text)
     self.win.refresh()
-    if self.otherWindow: # Preserve cursor position
-      self.otherWindow.refresh()
-      
-  
-  # You can tell it what window to return the cursor
-  # to after updating
-  def setMainWindow(self, window):
-    self.otherWindow = window
     
   def progressThread(self, tArgs, audioClass):
     index = 0
@@ -1850,6 +1641,15 @@ class ProgressBar(BasicMenuItem):
   
   # Displays the current x-value as a progress bar
   def updateIndex(self, i, start, end):
+    if(self.audioClass.isPaused()): # Display audio program log when stepping through while paused
+      evl = self.tArgs.evaluator
+      controlsMsg = "Space: unpause, left/right arrows: seek (hold shift for fine seek), v: toggle visibility, enter: exit progress control"
+      try:
+        evl.evaluate(i)
+        log = evl.getLog()
+        self.infoDisplay.updateInfo("Last output for x=" + str(i) + ": " + log + "\n" + controlsMsg)
+      except Exception as e:
+        self.infoDisplay.updateInfo("Exception at x=" + str(i) + ": " + type(e).__name__ + ": " + str(e))
     if self.progressBarEnabled == False:
       return
     maxLen = self.shape.colSize * self.shape.rowSize
@@ -1857,16 +1657,14 @@ class ProgressBar(BasicMenuItem):
     
     text = "{" + ''.join([char*value for char in '░' ])
     
-    # Lock thread
-    self.lock.acquire(blocking=True, timeout=1)
+    # Lock thread - for what?
+    #self.lock.acquire(blocking=True, timeout=1)
     self.win.erase()
     self.win.addstr(0, 0, text) # Display text
     self.win.addch(0, maxLen - 2, '}')
     self.win.refresh()
-    if self.otherWindow:
-      self.otherWindow.refresh()
     # Unlock thread
-    self.lock.release()
+    #self.lock.release()
     
 class graphButtonMenuItem(BasicMenuItem):
   isGraphThreadRunning = False
@@ -1981,14 +1779,9 @@ class TitleWindow:
 # Drive UIManager's type(ch) function with keyboard characters
 # to interact with it when needed.
 class UIManager:
-  def __init__(self, shape: Box, tArgs, audioClass):
-    #self.rowSize = rowSize
-    #self.colSize = colSize
-    #self.rowStart = rowStart
-    #self.colStart = colStart
-
+  def __init__(self, shape: Box, tArgs, audioClass, infoDisplay):
+    self.infoDisplay = infoDisplay
     self.tArgs = tArgs
-    self.infoPad = None
         
     self.settingPads = []
     self.boxWidth = int(shape.colSize / 3)
@@ -2006,7 +1799,7 @@ class UIManager:
     startWin.updateValue(tArgs.start)
     
     # Progress bar
-    progressWin = ProgressBar(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth), audioClass, tArgs)
+    progressWin = ProgressBar(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth), audioClass, tArgs, self.infoDisplay)
     
     # End range
     endWin = endRangeMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth * 2), "end", tArgs)
@@ -2017,7 +1810,7 @@ class UIManager:
     stepWin.updateValue(tArgs.step)
     
     # This currently takes up the width of the screen. Change the value from colSize to resize it
-    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), tArgs, progressWin)
+    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), tArgs, progressWin, self.infoDisplay)
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -2038,21 +1831,20 @@ class UIManager:
       
     self.refreshAll()
     # End of constructor
-    
-  # These are "optional" settings that enhance the experience of the menu.
-  # If you specify the main window as a window object, UIManager can return
-  # the cursor to the main window after updating one of its own windows
-  def setMainWindow(self, window):
-    self.getProgressBar().setMainWindow(window)
-    if self.infoPad:
-      self.infoPad.setMainWindow(window)
-    
-  # Set the infoPad in the most godawful way to allow it to display information
-  def setInfoDisplay(self, infoPad):
-    self.infoPad = infoPad
-    self.settingPads[4].setInfoDisplay(infoPad) # Give to exportButton
+  
+  # Returns true if this is busy editing a widget
+  def isEditing(self):
+    return self.editing
 
-    self.settingPads[1].infoPad = self.infoPad ##### TEMP #####
+  def onFocus(self):
+    self.refreshTitleMessage()
+    self.infoDisplay.updateInfo(self.focusedWindow.onHoverEnter())
+
+  def onUnfocus(self):
+    self.focusedWindow.onHoverLeave()
+    self.focusedWindow.hideCursor()
+    self.infoDisplay.updateInfo("")
+    self.title.refresh()
   
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
@@ -2088,13 +1880,13 @@ class UIManager:
       if self.editing == True:
         self.editing = False
         #self.focusedWindow.onHoverEnter()
-        self.infoPad.updateInfo("Cancelled editing!")
+        self.infoDisplay.updateInfo("Cancelled editing!")
         self.focusedWindow.onHoverEnter()
         self.refreshTitleMessage()
         return
       else: # Not editing? Interpret as shut down
         with self.lock:
-          self.infoPad.updateInfo("ESC recieved. Shutting down...")
+          self.infoDisplay.updateInfo("ESC recieved. Shutting down...")
           self.tArgs.shutdown = True
 
     # Switch between menu items
@@ -2114,7 +1906,7 @@ class UIManager:
       self.focusedWindow = self.settingPads[self.focusedWindowIndex]
       msg = self.focusedWindow.onHoverEnter()
       #self.setMainWindow(self.focusedWindow)
-      self.infoPad.updateInfo(msg)
+      self.infoDisplay.updateInfo(msg)
       return
       
     #self.setMainWindow(self.focusedWindow)
@@ -2125,7 +1917,7 @@ class UIManager:
       # Run action specified in class
       actionMsg = self.focusedWindow.doAction()
       self.focusedWindow.onHoverEnter()
-      self.infoPad.updateInfo(actionMsg)
+      self.infoDisplay.updateInfo(actionMsg)
       self.refreshTitleMessage()
     
     # Function macro to begin edting
@@ -2134,7 +1926,7 @@ class UIManager:
       self.focusedWindow.onHoverLeave() # Item exits hover mode while editing
       self.refreshTitleMessage()
       tooltipMsg = self.focusedWindow.onBeginEdit()
-      self.infoPad.updateInfo(tooltipMsg)
+      self.infoDisplay.updateInfo(tooltipMsg)
       if self.focusedWindow.isOneshot(): # If onBeginEdit() returns True, end edit immediately after.
         endEdit()
       self.focusedWindow.refresh()
@@ -2206,6 +1998,10 @@ class AudioPlayer:
     self.graph = None
     self.isGraphEnabled = None
     #self.enableGraph()
+    self.lock = threading.Lock()
+
+  def getLock(self):
+    return self.lock
 
   # A simple iterator that calls func from start to end over step.
   # Sort of like Python range(), but can work with any number, including floats
@@ -2272,9 +2068,14 @@ class AudioPlayer:
   def play(self):
     self.audioThread(self.tArgs,)
   
+  # Note that this doesn't use a lock by default for performance. However, you can manually retrive one using autoPlayer.getLock()
+  def isPaused(self):
+    return self.paused
+
   # Set this to True to pause
   def setPaused(self, paused):
-    self.paused = paused
+    with self.lock:
+      self.paused = paused
 
   def getAudioFunc(self):
     try: # Don't error-out on an empty text box
@@ -2393,11 +2194,15 @@ class AudioPlayer:
           if tArgs.shutdown:
             break
           
-          while self.paused == True or (tArgs.expression == "0" and tArgs.shutdown == False):
+          paused = False
+          with self.lock:
+            paused = self.paused
+          while paused == True or (tArgs.expression == "0" and tArgs.shutdown == False):
+            paused = self.paused # Basically relaxed read
             # Wait to become unpaused
             time.sleep(0.2)
             if tArgs.shutdown == True:
-              self.paused = False
+              self.setPaused(False)
           
           self.index = self.index + tArgs.step
           frameCount = frameCount + 1
@@ -2494,9 +2299,8 @@ def main(argv = None):
 
   try:
     # rowSize, colSize, rowStart, colStart
-    menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass)
     #Start the GUI input thread
-    window = WindowManager(tArgs, scr, tArgs.expression, menu) # TODO: tArgs.expression will be replaced with a file descriptor.
+    window = WindowManager(tArgs, scr, tArgs.expression, audioClass) # TODO: tArgs.expression will be replaced with a file descriptor.
   except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
     curses.curs_set(1) # Re-enable the actual cursor
     curses.echo()
