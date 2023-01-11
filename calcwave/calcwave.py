@@ -618,7 +618,7 @@ class TextEditor(BasicEditor):
        case 360: return curses.KEY_RIGHT
        case 338: return curses.KEY_DOWN
        case _: return None
-
+    
   # Drives this editor from keystrokes. Returns True if the event could do any useful action to the editor, or False if not
   def type(self, key):
     retVal = True
@@ -1278,7 +1278,7 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad):
     #exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
     exp_as_func = None
     with tArgs.lock:
-      exp_as_func = tArgs.evaluator()
+      exp_as_func = tArgs.evaluator
     # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
     
     # Cache values to prevent changes while writing
@@ -1529,8 +1529,9 @@ class ProgressBar(BasicMenuItem):
     self.lock = threading.Lock()
     self.audioClass = audioClass
     self.progressBarEnabled = True
-    self.temporaryPause = False
+    #self.temporaryPause = False
     self.tArgs = tArgs
+    self.isEditing = False
     
     # Start progress bar thread
     self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
@@ -1540,8 +1541,9 @@ class ProgressBar(BasicMenuItem):
     return "Progress Bar"
 
   def onBeginEdit(self):
+    self.isEditing = True
     super().onBeginEdit()
-    return "V- toggle visibility, Left/Right Arrows- move back and forth, Space- pause/play"
+    return self.getCtrlsMsg()
 
   def onHoverEnter(self):
     self.temporaryPause = True # To prevent unhighlighting
@@ -1566,7 +1568,8 @@ class ProgressBar(BasicMenuItem):
         blockWidth = blockWidth * 5
       
     if ch == 32: # Space
-      self.audioClass.setPaused(not(self.audioClass.isPaused())) # Function includes a lock, and must be done separately
+      self.audioClass.setPaused(not(self.audioClass.isPaused())) # This function includes a lock, and must be done separately
+      self.infoDisplay.updateInfo(("Paused" if self.audioClass.isPaused() else "Unpaused") + " audio player!\n" + self.getCtrlsMsg())
       return
     elif chr(ch) == 'v' or chr(ch) == 'V':
       self.toggleVisibility()
@@ -1574,11 +1577,7 @@ class ProgressBar(BasicMenuItem):
 
     with self.audioClass.getLock():
       index = self.audioClass.index
-      if ch == ord('h'): # H and l can be used as alternative arrow keys to step through slowly
-        index = index - self.tArgs.step
-      elif ch == ord('l'):
-        index = index + self.tArgs.step
-      elif ch == curses.KEY_LEFT or ch == curses.KEY_SLEFT:
+      if ch == curses.KEY_LEFT or ch == curses.KEY_SLEFT:
         index = index - blockWidth
       elif ch == curses.KEY_RIGHT or ch == curses.KEY_SRIGHT:
         index = index + blockWidth
@@ -1588,20 +1587,20 @@ class ProgressBar(BasicMenuItem):
         index = self.tArgs.end
       # Write back to audio player
       self.audioClass.index = index
+      if self.audioClass.isPaused():
+        self.debugIndex(index) # Show debugging info about current index
       self.updateIndex(index, self.tArgs.start, self.tArgs.end)
-      
-    
-    
-      
-    
-    
-        
     
   
   # Defines action to do when activated
   def doAction(self):
+    self.isEditing = False # TODO: Possibly not used
     return "Done editing progress bar."
   
+  # Returns a string explaining how to use the progress bar widget
+  def getCtrlsMsg(self):
+    pauseStr = "pause" if not self.audioClass.isPaused() else "unpause"
+    return f"Space: {pauseStr}, left/right arrows: seek (hold shift for fine seek), v: toggle visibility, enter / esc: exit progress bar"
   
   # Toggles progress bar visibility
   def toggleVisibility(self):
@@ -1624,33 +1623,37 @@ class ProgressBar(BasicMenuItem):
     index = 0
     while self.tArgs.shutdown == False:
     # Update menu index display
-      time.sleep(0.5)
-      with self.lock:
-        pause = self.temporaryPause
-      if self.tArgs.shutdown == False and self.progressBarEnabled and pause == False:
-        with self.lock:
-          index = audioClass.index
+      time.sleep(0.25)
+      #with self.lock:
+      #  pause = self.temporaryPause # TODO: I don't think this is even being used anymore
+      #if self.tArgs.shutdown == False and self.progressBarEnabled and pause == False:
+      #  with self.lock:
+      #    index = audioClass.index
+      #  self.updateIndex(index, tArgs.start, tArgs.end)
+      index = audioClass.index # relaxed read # TODO: How to actually use relaxed atomics in Python?
+      if self.tArgs.shutdown == False and self.progressBarEnabled and not self.audioClass.isPaused():
         self.updateIndex(index, tArgs.start, tArgs.end)
       
       # Display blank while not playing anything
-      if self.tArgs.expression == "0" and self.progressBarEnabled == True:
+      if self.tArgs.evaluator == None and self.progressBarEnabled == True: # TODO: targs.evaluator is probably never going to be None. How to check if it's a placeholder evaluator?
         self.toggleVisibility()
-        while self.tArgs.expression == "0":
+        while self.tArgs.evaluator == None:
           time.sleep(0.2)
         self.toggleVisibility()
-  
+
+  def debugIndex(self, i):
+    evl = self.tArgs.evaluator
+    controlsMsg = self.getCtrlsMsg()
+    try:
+      evl.evaluate(i)
+      log = evl.getLog()
+      self.infoDisplay.updateInfo("x=" + str(i) + ", result = " + log + "\n" + controlsMsg)
+    except Exception as e:
+      self.infoDisplay.updateInfo("Exception at x=" + str(i) + ": " + type(e).__name__ + ": " + str(e))
+
   # Displays the current x-value as a progress bar
-  def updateIndex(self, i, start, end):
-    if(self.audioClass.isPaused()): # Display audio program log when stepping through while paused
-      evl = self.tArgs.evaluator
-      controlsMsg = "Space: unpause, left/right arrows: seek (hold shift for fine seek), v: toggle visibility, enter: exit progress control"
-      try:
-        evl.evaluate(i)
-        log = evl.getLog()
-        self.infoDisplay.updateInfo("Last output for x=" + str(i) + ": " + log + "\n" + controlsMsg)
-      except Exception as e:
-        self.infoDisplay.updateInfo("Exception at x=" + str(i) + ": " + type(e).__name__ + ": " + str(e))
-    if self.progressBarEnabled == False:
+  def updateIndex(self, i, start, end):  
+    if self.progressBarEnabled == False: # TODO: Move this check to its callers, not the actual function?
       return
     maxLen = self.shape.colSize * self.shape.rowSize
     value = int(np.interp(i, [start,end], [0, maxLen - 2]))
