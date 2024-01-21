@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.5.1"
+version = "1.6.0"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -23,13 +23,15 @@ import os
 from sys import platform
 import struct
 import math
-from random import random
+import random
 import argparse
 import threading
 import time
 import wave
 import gc
-
+import mathextensions
+import json
+import itertools
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -51,7 +53,7 @@ if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export')
   import matplotlib.pyplot as plt
   
 # You will only need curses if using gui mode
-if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or sys.argv.count('--export')):
+if not sys.argv.count('--cli'):
   import curses
   from curses.textpad import Textbox, rectangle
   from curses import wrapper
@@ -77,6 +79,108 @@ if len(sys.argv) == 1 or sys.argv.count('--gui') and not(sys.argv.count('-o') or
   else:
     sys.stderr.write("Warning: unsupported platform, \"" + str(pform) + "\"\n")
     # Use default curses key definitions; doesn't change them
+
+
+#self.start = -100000
+#self.end = 100000
+#self.channels = 1
+#self.rate = 44100
+#self.frameSize = 1024
+#self.isGUI = False
+#self.shutdown = False
+#self.step = 1. # How much to increment x
+#self.functionTable = self.getFunctionTable()
+#self.evaluator = Evaluator("main=0")
+#self.lock = threading.Lock()
+
+# Checks every "delay" seconds, and saves to a file if flag has been set (it's not perfect)
+class SaveTimer:
+  def __init__(self, delay, filepath, threadArgs):
+    self.delay = delay
+    self.filepath = filepath
+    self.pendingsave = False
+    self.tArgs = threadArgs
+    self.thread = None
+    self.timerstate = False
+    self.titleWidget = None # To display whether your code is saved
+
+  def __del__(self):
+    self.notify()
+    self.timerOff()
+    if self.thread:
+      self.thread.join()
+
+  def setTitleWidget(self, titleWidget):
+    self.titleWidget = titleWidget
+
+  def clearSaveMsg(self):
+    if self.titleWidget:
+        self.titleWidget.setMessage("")
+        self.titleWidget.refresh()
+
+  # Notifies the timer that a change has been made
+  def notify(self):
+    if self.pendingsave == False:
+      self.pendingsave = True
+      self.clearSaveMsg()
+
+  def timerThread(self):
+    while self.tArgs.shutdown == False and self.timerstate == True:
+      time.sleep(self.delay)
+      if self.pendingsave:
+        self.pendingsave = False
+        self.save()
+    self.thread = None
+
+  def timerOn(self):
+    if self.timerstate == False:
+      self.timerstate = True
+      self.thread = threading.Thread(target=self.timerThread, daemon=True)
+      self.thread.start()
+
+  def timerOff(self):
+    self.timerstate = False
+  
+  # Saves to the file
+  def save(self):
+    dict = {"start": self.tArgs.start,
+            "end": self.tArgs.end,
+            "step": self.tArgs.step,
+            "rate": self.tArgs.rate,
+            "channels": self.tArgs.channels,
+            "frameSize": self.tArgs.frameSize,
+            "expr": self.tArgs.evaluator.getText()
+            }
+    
+    id = str(random.randint(1000,9999))
+    fil = self.filepath
+    with open(fil + id, 'w') as file:
+      json.dump(dict, file)
+    os.rename(fil + id, fil) # Replace original file with new "temp" file
+    if self.titleWidget:
+      self.titleWidget.setMessage("(Saved Last Compilation)")
+      self.titleWidget.refresh()
+
+  # Loads from the file - returns new threadArgs object
+  def load(self):
+    t = threadArgs()
+    dict = None
+    with open(self.filepath, 'r') as file:
+      dict = json.load(file)
+    t.start = dict['start']
+    t.end = dict['end']
+    t.step = dict['step']
+    t.rate = dict['rate']
+    t.channels = dict['channels']
+    t.frameSize = dict['frameSize']
+    t.evaluator = Evaluator(dict['expr'])
+    t.SaveTimer = self
+    self.tArgs = t
+    return t
+      
+  
+
+
 
 # This represents a left-corner starting location and an row/col size.
 # Unlike curses function calls, this uses the more standard (x,y)
@@ -371,12 +475,12 @@ class TextEditor(BasicEditor):
 
   # Calculates the display height of the given line
   def getLineHeight(self, line: int):
-    return int(len(self.data[line]) / self.shape.colSize)+1
+    return int((len(self.data[line])-1) / self.shape.colSize)+1
 
   # Changes the current line of text selected, relatively, updating the cursor offset and snapping to the end of the line
   def mvLine(self, lines, cursorOriented = True):
     ### Update cursor offset
-    cursorDepth = int(self.dataPos.col / self.shape.colSize) # How far down is the cursor on the current line relative to its start?
+    cursorDepth = int((self.dataPos.col) / (self.shape.colSize)) # How far down is the cursor on the current line relative to its start?
     lookback = 1 if lines < 0 else 0
     correctionLines = int(math.copysign(1, lines) * (self.getLineHeight(self.dataPos.row - lookback)-1))
     self.cursorOffset = self.cursorOffset + correctionLines # Increment / decrement cursor offset accordingly
@@ -439,12 +543,50 @@ class TextEditor(BasicEditor):
     pos = min(lineSize, orient) if ifPast else lineSize
     self.dataPos = self.dataPos.withCol(pos)
     self.setCursorPos(self.cursorPos.withCol(pos))
+  
+  # "Safer" version of goToEol
+  def goToEolV2(self):
+    startRow = self.getLineStartRow()
+    col = len(self.data[self.dataPos.row])
+    self.setCursorPos(Point(row = startRow, col = col))
+    self.dataPos = self.dataPos.withCol(col)
+
+
+  # Clears visuals to the end of the current (simulated) line, moving bottom text upwards
+  def clearToEol(self):
+    startRow = self.getLineStartRow()
+    height = self.getLineHeight(self.dataPos.row)
+    curr = self.cursorPos.row
+    diff = (startRow+height) - curr
+    self.win.clrtoeol()
+    oldPos = self.getPos()
+    if self.cursorPos.row == self.shape.rowSize-1:
+      return
+    for i in range(diff):
+      self.setCursorPos(Point(col = 0, row = self.cursorPos.row + 1))
+      self.win.deleteln()
+    self.setCursorPos(oldPos)
+    
+    
     
 
   def insertChar(self, ch):
-    self.data[self.dataPos.row].insert(self.dataPos.col, ch)
-    if(self.cursorPos.col == self.shape.colSize-1):
+    dataLen = len(self.data[self.dataPos.row])
+    if( (dataLen > 0 and dataLen % self.shape.colSize == 0) ): #and not len(self.data[self.dataPos.row]) >= self.shape.colSize ):
+      oldCur = self.cursorPos
+      oldData = self.dataPos
+      #self.goToEolV2()
+      #self.mvLine(2)
+      #self.refresh()
+      #self.mvLine(-2)
+      #self.setCursorPos(Point(col = 0, row = self.cursorPos.row + self.cursorOffset))
+      #self.moveCursor(rows = 1, cols = 0)
+      start = self.getLineStartRow()
+      self.win.move(start + self.getLineHeight(self.dataPos.row), 0)
       self.win.insertln()
+      self.cursorPos = oldCur
+      self.dataPos = oldData
+    self.data[self.dataPos.row].insert(self.dataPos.col, ch)
     self.moveCursor(rows = 0, cols = 1)
 
   # Highlights the range of text from p1 to p2, and adds this range into self.highlightedRanges so that it can be removed later
@@ -474,10 +616,13 @@ class TextEditor(BasicEditor):
       rowLen = len(self.data[dataPt.row])
       rowSize = min(rowLen - dataPt.col, self.shape.colSize) # Size of the text visible on the current display row
       isFirst = dataPt.row == begin.row and dataPt.col < self.shape.colSize
-      colStart = p1.col if isFirst else 0 # On the first line?
+      colStart = max(0, p1.col) if isFirst else 0 # On the first line?
       isLast = dataPt.row == p2.row and int(dataPt.col / self.shape.colSize) == height-1 
       colEnd = p2.col % self.shape.colSize if isLast else self.shape.colSize #int(dataPt.col / self.shape.colSize) == height-1 # On the last line of the last line? #dataPt.row == p2.row and dataPt.col < self.shape.colSize else rowLen
       #if cursorRow == 1: self.infoPad.updateInfo(f"isFirst: {isFirst}, isLast: {isLast}, cursorRow: {cursorRow}, colStart: {colStart}, colEnd: {colEnd}")
+      #for i in range(30):
+      #  print(cursorRow, colStart)
+      #time.sleep(1)
       self.win.chgat(cursorRow, colStart, max(colEnd - colStart, 1) , attribute)
       dataPt = dataPt.add_wrap_col(rowSize, width = max(1, rowLen)) # Go to next visible line
       cursorRow = cursorRow + 1
@@ -535,6 +680,7 @@ class TextEditor(BasicEditor):
   
   # Crawls to, and refreshes the bottommost visible line in the text editor
   def refreshLastLine(self):
+      #return
     # Skip to the ending line
       row = self.cursorPos.row
       dataRow = self.dataPos.row
@@ -558,14 +704,32 @@ class TextEditor(BasicEditor):
     if self.dataPos == Point(0,0):
       return False
     
+    dataLen = len(self.data[self.dataPos.row])
+    #charList = self.data.pop(self.dataPos.row)
+    #self.data[self.dataPos.row].extend(charList)
+    #if dataLen > 0 and dataLen % self.shape.colSize == 0:
+    #  self.win.deleteln()
+    #self.slideData(-1)
+    #return True
+    #if self.cursorPos.col == 0:
+    #  self.win.deleteln()
     if self.dataPos.col == 0: # Delete this line, move the cursor to the end of the previous line, and bring following text with it
-      charList = self.data.pop(self.dataPos.row)
+      charList = self.data.pop(self.dataPos.row) # Take the current line contents
       self.win.deleteln()
       self.mvLine(-1)
       self.goToEol()
       self.data[self.dataPos.row].extend(charList)
       ### Refresh a line of text at the end without changing cursor parameters ###
       self.refreshLastLine()
+    elif dataLen != self.cursorPos.col and dataLen % self.shape.colSize == 1: # Bring text below the current up with it once it shrinks and traverses lines
+      # ; a visual-only effect
+      self.slideData(-1)
+      self.data[self.dataPos.row].pop(self.dataPos.col)
+      oldPos = self.cursorPos
+      start = self.getLineStartRow()
+      self.win.move(start + self.getLineHeight(self.dataPos.row), 0)
+      self.win.deleteln()
+      self.cursorPos = oldPos
     else: # Delete a character on the current line, and move the cursor back
       self.slideData(-1)
       self.data[self.dataPos.row].pop(self.dataPos.col)
@@ -574,8 +738,16 @@ class TextEditor(BasicEditor):
   def enter(self):
     line = self.data[self.dataPos.row]
     oldTail = line[self.dataPos.col: len(line)]
+    #self.clearToEol()
+
+    realLineSize = len(self.data[self.dataPos.row])
+    #lineStart = self.getLineStartRow()
+    #lineHeight = self.getLineHeight()
+    #if self.dataPos.col >= realLineSize - (realLineSize % self.shape.colSize): # Only if you are on the very last line
+    if self.cursorPos.col < (realLineSize % self.shape.colSize) or self.cursorPos.col == self.dataPos.col:
+      self.win.insertln()
+    
     self.data.insert(self.dataPos.row+1, oldTail) if self.dataPos.row != len(self.data)-1 else self.data.append(oldTail) # Add the tail of the last line (if any) to a new line
-    self.win.insertln()
     for i in range(len(oldTail)): # Delete tail of original line
       self.data[self.dataPos.row].pop(self.dataPos.col)
     self.refresh() # Refresh optimization will not otherwise see it, as it is switching lines
@@ -648,10 +820,10 @@ class TextEditor(BasicEditor):
         self.slideData(self.shape.colSize)
       # vvv If the latter is not true, but there is still room to go to the end of the line, and it is not already near the end of the line (or the line is a single line)
       elif rowLen - self.dataPos.col < self.shape.colSize and rowLen - self.dataPos.col > rowLen % self.shape.colSize:
-        self.goToEol()
+        self.goToEolV2()        
       elif self.dataPos.row < len(self.data)-1: # If it is within the bounds of the screen
         self.mvLine(1)
-      else: # I give up
+      else: # "I give up"
         retVal = False
     elif key == curses.KEY_LEFT:
       if self.dataPos != Point(0,0):
@@ -910,8 +1082,8 @@ class InputPad:
         # A workaround for a bug where it wouldn't bring text on the next line
         # with it when it backspaced when the cursor was two places to the left of the right
         # side of the window
-        if self.curCol + 1 == self.shape.colSize-1:
-          self.insert(0, None)
+        #if self.curCol + 1 == self.shape.colSize-1:
+        #  self.insert(0, None)
       else:
         self.insert(-1, None)
         self.goLeft()
@@ -954,7 +1126,7 @@ class InputPad:
 #To hold data that is passed to multiple running threads
 class threadArgs:
   def __init__(self):
-    self.expression = ""
+    #self.expression = ""
     self.start = -100000
     self.end = 100000
     self.channels = 1
@@ -964,32 +1136,59 @@ class threadArgs:
     self.shutdown = False
     self.step = 1. # How much to increment x
     self.functionTable = self.getFunctionTable()
-    self.evaluator = Evaluator("main=0")
+    self.evaluator = None
+    self.SaveTimer = None
+    self.updateAudio = False # Audio interrupt to read new data
     self.lock = threading.Lock()
     
   # Define functions available to eval here.
   def getFunctionTable(self):
     functionsDict = vars(math)
+    tri = lambda t: (2*(t%(2*math.pi)))/(2*math.pi)-1
+    functionsDict['tri'] = tri
+    functionsDict['saw'] = lambda t: 2*abs(tri(t))-1
+    functionsDict['sqr'] = lambda t: 1.0 if math.sin(t) > 0 else -1.0
+    functionsDict['abs'] = abs
  
     # Returns a random number between -1 and 1. Can be used to generate fuzz noises.
     def rand():
-      return random() * 2 - 1
+      return random.random() * 2 - 1
     functionsDict["rand"] = rand
  
     return functionsDict
 
 # Accepts CalcWave text input
-# Parses and evaluates the CalcWave syntax
+# Parses and evaluates Python syntax
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
-  # Lightweight constructor that then immediately compiles text
+  # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
   def __init__(self, text, symbolTable = vars(math)):
     self.symbolTable = symbolTable
     self.text = text
     symbolTable['log'] = None
     symbolTable['x'] = 0
     symbolTable["main"] = 0
+    # Add 10 available persistent variables, P0-P9.
+    # This limit is in place because if any names were allowed, the wrong P-variable could be set by mistake
+    # while typing one starting with the same name.
+    # Note that this feature was removed because it didn't make much sense - how do you initialize these variables, guarantee
+    # particular types, or prevent accidental assignments?
+    #symbolTable["P0"] = 0
+    #symbolTable["P1"] = 0
+    #symbolTable["P2"] = 0
+    #symbolTable["P3"] = 0
+    #symbolTable["P4"] = 0
+    #symbolTable["P5"] = 0
+    #symbolTable["P6"] = 0
+    #symbolTable["P7"] = 0
+    #symbolTable["P8"] = 0
+    #symbolTable["P9"] = 0
+
     self.prog = compile(text, '<string>', 'exec', optimize=2)
+
+  # Retrieves the current expression contents as a string
+  def getText(self):
+    return self.text
 
   # Gets the last logged value, or the last computed value if none was specified
   def getLog(self):
@@ -1002,13 +1201,15 @@ class Evaluator:
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
     self.symbolTable['x'] = x # Add x to the internal symbol table
+    for extension in dir(mathextensions):
+      self.symbolTable[str(extension)] = extension
     exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
     return self.symbolTable["main"] # Return result
 
 
 # Handles GUI
 class WindowManager:
-  def __init__(self, tArgs, scr, initialExpr, audioClass):
+  def __init__(self, tArgs, scr, initialExpr, audioClass, exportDtype = int):
     self.tArgs = tArgs
     self.scr = scr
     
@@ -1022,11 +1223,11 @@ class WindowManager:
   
     #Initialize info display window
     self.infoDisplay = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
-    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass, self.infoDisplay)
+    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass, self.infoDisplay, exportDtype = exportDtype)
     
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu), daemon=True)
     self.thread.start()
-    self.editor.setText("main = " + initialExpr)
+    self.editor.setText(initialExpr)
     
   def windowThread(self, tArgs, scr, menu):
     self.scr.getch()
@@ -1046,17 +1247,22 @@ class WindowManager:
           with self.tArgs.lock:
             self.tArgs.shutdown = True
           break
-
+        isArrowKey = (ch == curses.KEY_UP or ch == curses.KEY_DOWN or ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT)
         successful = self.focused.type(ch)
         if successful and self.focused == self.editor:
+          p = self.editor.getPos()
+          self.infoDisplay.updateInfo(f"Line: {p.row}, Col: {p.col}, Scroll: {self.editor.scrollOffset}")
+          if isArrowKey:
+            continue
+          self.tArgs.SaveTimer.clearSaveMsg()
           # Display cursor position
           text = self.editor.getText()
-          p = self.editor.getPos()
-          self.infoDisplay.updateInfo(f"Line: {p.row}, Col: {p.col}")
           try:
             evaluator = Evaluator(text) # Compile on-screen code
             with tArgs.lock:
               tArgs.evaluator = evaluator # Install newly compiled code
+              self.tArgs.SaveTimer.notify()
+              self.tArgs.updateAudio = True
           except Exception as e:
             # Display exceptions to the user
             self.infoDisplay.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
@@ -1175,13 +1381,14 @@ class BasicMenuItem:
 
 # A button to export audio as a WAV file, assuming you have the "wave" module installed.
 class exportButton(LineEditor, BasicMenuItem):
-  def __init__(self, shape: Box, tArgs, progressBar, infoDisplay):
+  def __init__(self, shape: Box, tArgs, progressBar, infoDisplay, dtype):
     super().__init__(shape)
     self.tArgs = tArgs
     self.infoPad = infoDisplay
     self.progressBar = progressBar
     self.setText("Export Audio")
     self.hideCursor()
+    self.dtype = dtype
 
 
   def getDisplayName(self):
@@ -1208,6 +1415,7 @@ class exportButton(LineEditor, BasicMenuItem):
   def type(self, ch):
     super().type(ch)
     name = self.getText()
+    name = os.path.expanduser(name)
     if name == '':
       self.infoPad.updateInfo("Please enter filename, and press enter to save. Any existing file will be overwritten.")
       return
@@ -1227,6 +1435,7 @@ class exportButton(LineEditor, BasicMenuItem):
     else:
       path = os.getcwd()
       fullPath = path + "/" + name + ".wav"
+    
       
     if os.path.isfile(fullPath):
       self.infoPad.updateInfo("Will overwrite " + fullPath)
@@ -1236,6 +1445,7 @@ class exportButton(LineEditor, BasicMenuItem):
   # Where it actually saves the file
   def doAction(self):
     name = self.getText()
+    name = os.path.expanduser(name)
     actionMessage = "File saved in same directory!"
     if name == '':
       self.setText("Export Audio")
@@ -1244,7 +1454,7 @@ class exportButton(LineEditor, BasicMenuItem):
     path = ''
     if '/' in name:
       fullPath = name + ".wav"
-      parDir = '/'.join(fullPath.split('/')[0:-1])
+      parDir = '/'.join(fullPath.split('/')[0:-1]) # Remove ending '/'
       if not os.path.isdir(parDir):
         actionMsg = "Cannot export audio: invalid path \"" + fullPath + "\""
         self.setText("Export Audio")
@@ -1255,74 +1465,91 @@ class exportButton(LineEditor, BasicMenuItem):
     actionMsg = "Saving file as " + fullPath
     
     #with self.lock:
-    self.progressBar.temporaryPause = False
     if(self.infoPad):
       self.infoPad.updateInfo("Writing...")
     
     # Do in a separate thread?
-    thread = threading.Thread(target=exportAudio, args=(fullPath, self.tArgs, self.progressBar, self.infoPad), daemon = True)
+    thread = threading.Thread(target=exportAudio, args=(fullPath, self.tArgs, self.progressBar, self.infoPad, self.dtype), daemon = True)
     thread.start()
     #exportAudio(fullPath)
     return actionMsg
     
+  # Accepts a generator, and returns chunk arrays of size n until depleted, courtesy of ChatGPT
+def chunker(generator, n):
+  while True:
+    chunk = list(itertools.islice(generator, n))
+    if not chunk:
+      break
+    yield chunk
+
+def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
+  def exHandler(ex):
+    infoPad.updateInfo("An exception was thrown during processing. Continuing to write; " + str(ex))
+    infoPad = None # Don't update anymore
+    return 0
+  start, end, step = (0,0,0)
+  with tArgs.lock:
+    start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+  iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler=exHandler)
+  
+  # Logic for progress display
+  i = 0
+  progressStart = 0 # The point the progress display will start from, so it doesn't go backwards
+  # Support negative (backwards) step
+  if step < 0:
+    i = end
+    progressStart = end
+  elif step > 0:
+    i = start
+    progressStart = start
+  elif step == 0:
+    raise(ValueError("Step value cannot be zero!"))
+  
+
+  with open(fullPath, 'wb') as file:
+    totalsize = int((end - start) / step)
+    file.write(get_wav_header(totalsize, tArgs.rate, dtype))
     
-# Exports audio to a wav file, optionally showing progress on the infoPad if specified
-def exportAudio(fullPath, tArgs, progressBar, infoPad):
-  lock = threading.Lock()
-  oldTime = time.time()
-  with wave.open(fullPath, 'w') as f:
-    f.setnchannels(tArgs.channels)
-    f.setsampwidth(2)
-    f.setframerate(tArgs.rate)
-    x = 0
-    #exp_as_func = eval('lambda x: ' + "(" + tArgs.expression + ")*32767", tArgs.functionTable)
-    exp_as_func = None
-    with tArgs.lock:
-      exp_as_func = tArgs.evaluator
-    # Goes from -32767 to 32767 instead of -1 to 1, and needs to produce ints
-    
-    # Cache values to prevent changes while writing
-    step = tArgs.step
-    start = tArgs.start
-    end = tArgs.end
-    value = 0
-    
-    i=0
-    progressStart = 0 # The point the progress display will start from, so it doesn't go backwards
-    # Support negative (backwards) step
-    if step < 0:
-      i = end
-      progressStart = end
-    elif step > 0:
-      i = start
-      progressStart = start
-    elif step == 0:
-      raise(ValueError("Step value cannot be zero!"))
-    while i <= end and i >= start: # Python's range() does not support using floats as step value
-      try:
-        value = int(exp_as_func.evaluate(i) * 32767)
-      except:
-        pass
-        
-      if value > 32767:
-        value = 32767
-      elif value < -32767:
-        value = -32767
-        
-      f.writeframesraw( bytes(struct.pack('<h', value)) )
-      
-      newTime = time.time()
-      
-      if newTime - oldTime > 1 and infoPad and progressBar:
-        oldTime = newTime
-        #with lock:
-        progressBar.temporaryPause = True
+    j = 0
+    # Write wave file
+    for chunk in chunker(iter, tArgs.frameSize):
+      if dtype == float:
+        file.write(struct.pack('<%df' % len(chunk), *chunk))
+      elif dtype == int:
+        #for o in chunk:
+        #  print(o, file=sys.stderr)
+        chunk = [int(c*32767) for c in chunk]
+        file.write(struct.pack('<%dh' % len(chunk), *chunk))
+      if j % 120 == 0:
         infoPad.updateInfo("Writing (" + str(int(abs(i-progressStart)/(abs(end-start))*100)) + "%)...")
-        progressBar.temporaryPause = False
-      i = i + step
+      i = i + len(chunk)
+      j = j + 1
   if infoPad:
     infoPad.updateInfo("Exported as " + fullPath)
-    
+
+
+
+# Adapted from https://stackoverflow.com/a/15650213
+def get_wav_header(totalsize, sample_rate, dtype):
+  byte_count = (totalsize) * (4 if dtype == float else 2) # 32-bit floats
+  # write the header
+  wav_file = struct.pack('<ccccIccccccccIHHIIHHccccI',
+    b'R', b'I', b'F', b'F',
+    byte_count + 44 - 8,  # header size
+    b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ',
+    16,  # size of 'fmt ' header
+    3 if dtype == float else 1,  # format 3 = floating-point PCM
+    1,  # channels (tArgs.channels is not yet supported)
+    sample_rate,  # samples / second
+    sample_rate * (4 if dtype == float else 2),  # bytes / second
+    4 if dtype == float else 2,  # block alignment
+    32 if dtype == float else 16,  # bits / sample
+    b'd', b'a', b't', b'a', byte_count)
+  return wav_file
+  
+
+
+
 
 
 # A menu item in the format "name=..." that types like an InputPad
@@ -1529,7 +1756,6 @@ class ProgressBar(BasicMenuItem):
     self.lock = threading.Lock()
     self.audioClass = audioClass
     self.progressBarEnabled = True
-    #self.temporaryPause = False
     self.tArgs = tArgs
     self.isEditing = False
     
@@ -1546,17 +1772,14 @@ class ProgressBar(BasicMenuItem):
     return self.getCtrlsMsg()
 
   def onHoverEnter(self):
-    self.temporaryPause = True # To prevent unhighlighting
     super().onHoverEnter()
     return "Press enter to pause, seek, and change progress bar settings."
     
   def onHoverLeave(self):
-    self.temporaryPause = False
     super().onHoverLeave()
     
   def type(self, ch):
     #with self.lock:
-    self.temporaryPause = False # TODO: Deprecated
     # Handle left/right stepping
     
     blockWidth = self.tArgs.step
@@ -1587,6 +1810,9 @@ class ProgressBar(BasicMenuItem):
         index = self.tArgs.end
       # Write back to audio player
       self.audioClass.index = index
+      self.audioClass.nextStart = index
+      self.audioClass.paused = True
+      self.tArgs.updateAudio = True
       if self.audioClass.isPaused():
         self.debugIndex(index) # Show debugging info about current index
       self.updateIndex(index, self.tArgs.start, self.tArgs.end)
@@ -1625,7 +1851,6 @@ class ProgressBar(BasicMenuItem):
     # Update menu index display
       time.sleep(0.25)
       #with self.lock:
-      #  pause = self.temporaryPause # TODO: I don't think this is even being used anymore
       #if self.tArgs.shutdown == False and self.progressBarEnabled and pause == False:
       #  with self.lock:
       #    index = audioClass.index
@@ -1759,33 +1984,41 @@ class TitleWindow:
   def __init__(self, shape: Box):
     self.shape = shape
     self.win = curses.newwin(shape.rowSize, shape.colSize, shape.rowStart, shape.colStart)
+    self.message = ""
     self.refresh()
-  
+    
   # Draws the title and onHoverEnters it
   def refresh(self):
     self.win.clear()
-    self.win.addstr("Calcwave v" + version)
+    self.win.addstr("Calcwave v" + version + self.message)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
     curses.use_default_colors()
     self.win.refresh()
     
-  # Use curstom text
+  # Use custom text
   def customTitle(self, text):
     self.win.clear()
-    self.win.addstr(text)
+    self.win.addstr(text + self.message)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
     curses.use_default_colors()
     self.win.refresh()
+
+  # Appends a mandantory message to the end of the title
+  def setMessage(self, text):
+    if text == "":
+      self.message = ""
+    else:
+      self.message = " " + text
     
     
 # A class that controls and handles interactions with menus and other UI.
 # Drive UIManager's type(ch) function with keyboard characters
 # to interact with it when needed.
 class UIManager:
-  def __init__(self, shape: Box, tArgs, audioClass, infoDisplay):
+  def __init__(self, shape: Box, tArgs, audioClass, infoDisplay, exportDtype = int):
     self.infoDisplay = infoDisplay
     self.tArgs = tArgs
-        
+    
     self.settingPads = []
     self.boxWidth = int(shape.colSize / 3)
     
@@ -1813,7 +2046,7 @@ class UIManager:
     stepWin.updateValue(tArgs.step)
     
     # This currently takes up the width of the screen. Change the value from colSize to resize it
-    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), tArgs, progressWin, self.infoDisplay)
+    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), tArgs, progressWin, self.infoDisplay, exportDtype)
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -1914,7 +2147,7 @@ class UIManager:
       
     #self.setMainWindow(self.focusedWindow)
     
-    # Function macro to end editing ; TODO: Make this not horribly inline with code?
+    # Function macro to end editing ; TODO: Make this not horribly inline inside this function?
     def endEdit():
       self.editing = False
       # Run action specified in class
@@ -1922,6 +2155,8 @@ class UIManager:
       self.focusedWindow.onHoverEnter()
       self.infoDisplay.updateInfo(actionMsg)
       self.refreshTitleMessage()
+      self.tArgs.SaveTimer.notify()
+      self.tArgs.updateAudio = True
     
     # Function macro to begin edting
     def beginEdit():
@@ -1989,8 +2224,31 @@ class InfoDisplay:
       self.otherWindow.refresh()
       
 
-
-
+  # A simple iterator that calls func from start to end over step.
+  # Sort of like Python range(), but can work with any number, including floats
+  # Returns 0 if there was an exception evaluating the function (hence "maybe")
+class maybeCalcIterator(object):
+  def __init__(self, start, end, step, func, minVal = None, maxVal = None, exceptionHandler = None):
+    self.start, self.end, self.step, self.func = start, end, step, func
+    self.curr = end if step < 0 else start
+    self.minVal, self.maxVal = minVal, maxVal
+    self.exceptionHandler = lambda x: 0 if not exceptionHandler else exceptionHandler
+  def __iter__(self):
+    return self
+  def __next__(self):
+    if(self.curr > self.end or self.curr < self.start):
+      raise StopIteration()
+    x, self.curr = self.curr, self.curr + self.step
+    try:
+      v = self.func(x)
+      if self.minVal and v < self.minVal:
+        v = self.minVal
+      elif self.maxVal and v > self.maxVal:
+        v = self.maxVal
+      return v
+    
+    except Exception as e:
+      return self.exceptionHandler(e)
 
 #Thread generating and playing audio
 class AudioPlayer:
@@ -2001,27 +2259,13 @@ class AudioPlayer:
     self.graph = None
     self.isGraphEnabled = None
     #self.enableGraph()
-    self.lock = threading.Lock()
+    #self.lock = threading.Lock()
+    self.nextStart = None
 
   def getLock(self):
-    return self.lock
-
-  # A simple iterator that calls func from start to end over step.
-  # Sort of like Python range(), but can work with any number, including floats
-  # Returns 0 if there was an exception evaluating the function (hence "maybe")
-  class maybeCalcIterator(object):
-    def __init__(self, start, end, step, func):
-      self.start, self.end, self.step, self.func, self.curr = start, end, step, func, start
-    def __iter__(self):
-      return self
-    def __next__(self):
-      if(self.curr > self.end):
-        raise StopIteration()
-      x, self.curr = self.curr, self.curr + self.step
-      try:
-        return self.func(x)
-      except Exception as e:
-        return 0
+    return self.tArgs.lock
+    #return self.lock
+  
 
   def enableGraph(self):
     with threading.Lock():
@@ -2045,10 +2289,10 @@ class AudioPlayer:
     plt.ion()
     plt.ylim([-1,1])
     #X = [x for x in self.calcIterator(self.tArgs.start, self.tArgs.end, self.tArgs.step), lambda x: x]
-    audioFunc = self.getAudioFunc()
-    if not audioFunc:
-      audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
-    X = [x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * (self.tArgs.frameSize-1), self.tArgs.step, lambda x: x)]
+    #audioFunc = self.getAudioFunc()
+    #if not audioFunc:
+    #  audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
+    X = [x for x in maybeCalcIterator(self.tArgs.start, self.tArgs.start+abs(self.tArgs.step) * (self.tArgs.frameSize-1), abs(self.tArgs.step), lambda x: x)]
     Y = [0.0] * self.tArgs.frameSize #[x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * self.tArgs.frameSize, self.tArgs.step, audioFunc)]
     self.graph = plt.plot(X, Y)[0] #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
 
@@ -2077,42 +2321,110 @@ class AudioPlayer:
 
   # Set this to True to pause
   def setPaused(self, paused):
-    with self.lock:
+    with self.getLock():
       self.paused = paused
 
-  def getAudioFunc(self):
-    try: # Don't error-out on an empty text box
-      if(self.tArgs.expression):
-        exp_as_func = eval('lambda x: ' + self.tArgs.expression, self.tArgs.functionTable)
-        return exp_as_func
-      #exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
-    except SyntaxError:
-      #sys.stderr.write("Error creating generator function: Expression has not yet been set, or other SyntaxError\n")
-      pass
+  #def getAudioFunc(self):
+  #  try: # Don't error-out on an empty text box
+  #    if(self.tArgs.expression):
+  #      exp_as_func = eval('lambda x: ' + self.tArgs.expression, self.tArgs.functionTable)
+  #      return exp_as_func
+  #    #exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
+  #  except SyntaxError:
+  #    #sys.stderr.write("Error creating generator function: Expression has not yet been set, or other SyntaxError\n")
+  #    pass
 
   # Calculates n results from func, starting at curr, and optionally looping to start it reaches more than end, and returns 0 for any errors that occur.
-  class maybeCountingIterator(object):
-    def __init__(self, n, func, curr, step, start = None, end = None):
-      #self.start, self.end, self.step, self.func, self.curr = start, end, step, func, start
-      self.n, self.func, self.curr, self.step, self.start, self.end = n, func, curr, step, start, end
-      self.count = 0
-      if start == None: # Loop to curr if end is provided, but start is none for some reason
-        self.start = curr
-    def __iter__(self):
-      return self
-    def __next__(self):
-      if(self.count > self.n):
-        raise StopIteration()
-      self.count = self.count + 1
-      x, self.curr = self.curr, self.curr + self.step
-      if self.end is not None and self.curr > self.end: # Loop around to start if end is provided
-        self.curr = self.start
-      try:
-        return self.func(x)
-      except Exception as e:
-        return 0
+  #class maybeCountingIterator(object):
+  #  def __init__(self, n, func, curr, step, start = None, end = None):
+  #    #self.start, self.end, self.step, self.func, self.curr = start, end, step, func, start
+  #    self.n, self.func, self.curr, self.step, self.start, self.end = n, func, curr, step, start, end
+  #    self.count = 0
+  #    if start == None: # Loop to curr if end is provided, but start is none for some reason
+  #      self.start = curr
+  #  def __iter__(self):
+  #    return self
+  #  def __next__(self):
+  #    if(self.count > self.n):
+  #      raise StopIteration()
+  #    self.count = self.count + 1
+  #    x, self.curr = self.curr, self.curr + self.step
+  #    if self.end is not None and self.curr > self.end: # Loop around to start if end is provided
+  #      self.curr = self.start
+  #    try:
+  #      return self.func(x)
+  #    except Exception as e:
+  #      return 0
+
 
   def audioThread(self, tArgs):
+    try:
+      p = pyaudio.PyAudio()
+      stream = p.open(format=pyaudio.paFloat32,
+                      channels = tArgs.channels,
+                      rate = tArgs.rate,
+                      output = True,
+                      frames_per_buffer = tArgs.frameSize)
+      
+      
+      frameSize = tArgs.frameSize
+      start, end, step, evaluator = (0,0,0, None)
+      with tArgs.lock:
+        start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+      while tArgs.shutdown == False:
+
+        while self.paused == True:
+          paused = self.paused # Basically relaxed read
+          # Wait to become unpaused
+          time.sleep(0.2)
+          if tArgs.shutdown == True:
+            self.setPaused(False)
+
+        # Refresh data
+        with tArgs.lock:
+          start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+          if self.nextStart != None:
+            if step < 0:
+              end = self.nextStart
+            else:
+              start = self.nextStart
+            self.nextStart = None
+
+        iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = None)
+        for chunk in chunker(iter, tArgs.frameSize):
+          stream.write( struct.pack('<%df' % len(chunk), *chunk) )
+          self.updateGraphState() # Have this thread manage the graph
+          cont = False
+          self.index = iter.curr
+          with self.getLock():
+            if tArgs.updateAudio or tArgs.shutdown or self.paused: # Time to read new data
+              tArgs.updateAudio = False
+              cont = True
+              self.nextStart = iter.curr # Pick up where you left off this time
+              break
+          
+          if self.graph is not None and len(chunk) == frameSize: # Draw the graph if enabled
+            self.graph.set_ydata(chunk)
+            plt.draw()
+            plt.pause(0.01)
+        if cont: continue
+
+        
+
+    except (KeyboardInterrupt, SystemExit):
+      pass
+    finally:
+      tArgs.shutdown = True
+      stream.stop_stream()
+      stream.close()
+      p.terminate()
+      sys.stderr.write("Audio player shut down.\n")
+        
+
+
+    
+
+  def audioThreadOld(self, tArgs):
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paFloat32,
                     channels = tArgs.channels,
@@ -2146,7 +2458,7 @@ class AudioPlayer:
         #for self.index in range(tArgs.start, tArgs.end, 1):
         while self.index >= tArgs.start and self.index <= tArgs.end: # Loop over range
           try:
-            if tArgs.expression or True: ###
+            if tArgs.evaluator: ###
 ###            value = exp_as_func(self.index) # This is where the waveform values are actually calculated
                value = exp_as_func.evaluate(self.index)
               # for an input value, substituted for x
@@ -2200,7 +2512,7 @@ class AudioPlayer:
           paused = False
           with self.lock:
             paused = self.paused
-          while paused == True or (tArgs.expression == "0" and tArgs.shutdown == False):
+          while paused == True or (tArgs.evaluator.getText() == "0" and tArgs.shutdown == False):
             paused = self.paused # Basically relaxed read
             # Wait to become unpaused
             time.sleep(0.2)
@@ -2235,23 +2547,26 @@ def main(argv = None):
   
   parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
   
-  parser.add_argument('expression', type = str,
-                      help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, use 0 for this parimeter")
+  parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
+  parser.add_argument('-x', '--expr', type = str, default = "0",
+                      help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
   parser.add_argument("-s", "--start", type = int, default = -100000,
                       help = "The lower range of x to start from.")
   parser.add_argument("-e", "--end", type = int, default = 100000,
                       help = "The upper range of x to end at.")
-  parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
-                      help = "Export to specified file as wav. File extension is automatically added.")
-  parser.add_argument("--channels", type = int, default = 1,
-                      help = "The number of audio channels to use")
+  #parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
+  #                    help = "Export to specified file as wav. File extension is automatically added.")
+  #parser.add_argument("--channels", type = int, default = 1,
+  #                    help = "The number of audio channels to use")
+  parser.add_argument("-d", "--float32", action="store_true", help = "Export audio as float32 wav (still clipped between -1 and 1)")
   parser.add_argument("--rate", type = int, default = 44100,
                       help = "The audio rate to use")
   parser.add_argument("--buffer", type = int, default = 1024,
                       help = "The audio buffer frame size to use. This is the length of the list of floats, not the memory it will take.")
-  parser.add_argument("--gui", default = False, action = "store_true",
-                      help = "Start with the GUI")
+  parser.add_argument("--cli", default = False, action = "store_true",
+                      help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching curses mode")
   
+
   if argv is None:
     argv = sys.argv
   
@@ -2259,51 +2574,58 @@ def main(argv = None):
   # information about how to play sound and act
   tArgs = threadArgs()
   
-  isGuiArgument = False
-  isExportArgument = False
-  isExpressionProvided = False
-  args = None
-  if len(sys.argv) > 1:
-    args = parser.parse_args() #Parse arguments
-    #Set variables
-    tArgs.expression = args.expression
-    tArgs.start = args.start
-    tArgs.end = args.end
-    tArgs.channels = args.channels
-    tArgs.rate = args.rate
-    tArgs.frameSize = args.buffer
+  args = parser.parse_args() #Parse arguments
+  #Set variables
+  tArgs.evaluator = Evaluator("main = " + args.expr)
+  tArgs.start = args.start
+  tArgs.end = args.end
+  #tArgs.channels = args.channels # Note that right now, "channels" is not used.
+  tArgs.channels = 1
+  tArgs.rate = args.rate
+  tArgs.frameSize = args.buffer
     
-    isExportArgument = args.export != ""
-    isGuiArgument = args.gui
-    isExpressionProvided = args.expression != ""
-    
-  # Initialize AudioPlayer
-  audioClass = AudioPlayer(tArgs)
   
+  # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
+  saveTimer = None
+  if args.cli:
+    if args.expr == "":
+      print("Error: --expr is required with --cli", file = sys.stderr)
+      sys.exit(1)
+    exportAudio(args.file, tArgs, None, None, type = float if args.float32 else int) # CLI operation
+    sys.exit(0)
+  else:
+    saveTimer = SaveTimer(2, args.file, tArgs) # Save every 2 seconds if changes are present
+    tArgs.SaveTimer = saveTimer
+    if os.path.isfile(args.file):
+      # Load from file path if exists; else, leave to be created.
+      # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
+      tArgs = saveTimer.load() # Load from file passed into SaveTimer
+    saveTimer.timerOn() # Start autosave timer
+      
+  
+  sys.stderr.write("Starting GUI mode\n")
+
   window = None
   scr = None
   menu = None
+
+  # Initialize AudioPlayer
+  audioClass = AudioPlayer(tArgs)
   
-  #The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
-  if len(sys.argv) == 1 or isGuiArgument or not(isExportArgument or isExpressionProvided):
-    #If no arguments are supplied - GUI
-    if isExpressionProvided:
-      tArgs.expression = args.expression # TODO: Deprecated
-    sys.stderr.write("Starting GUI mode\n")
-    tArgs.isGUI = True
+
+  scr = curses.initscr()
+  curses.curs_set(0) # Disable the actual cursor
+  rows, cols = scr.getmaxyx()
     
-    scr = curses.initscr()
-    curses.curs_set(0) # Disable the actual cursor
-    rows, cols = scr.getmaxyx()
-    
-    if curses.has_colors():
-      curses.start_color()
-      curses.use_default_colors()
+  if curses.has_colors():
+    curses.start_color()
+    curses.use_default_colors()
 
   try:
     # rowSize, colSize, rowStart, colStart
     #Start the GUI input thread
-    window = WindowManager(tArgs, scr, tArgs.expression, audioClass) # TODO: tArgs.expression will be replaced with a file descriptor.
+    window = WindowManager(tArgs, scr, tArgs.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
+    saveTimer.setTitleWidget(window.menu.title)
   except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
     curses.curs_set(1) # Re-enable the actual cursor
     curses.echo()
@@ -2312,22 +2634,16 @@ def main(argv = None):
     curses.endwin()
     print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
     raise e
-   
-    
-    tArgs.expression = "0" # Default value
-  else:
-    tArgs.isGUI = False
     
     
+  # Keep in mind that menu will be None when it is not in GUI mode...
+  audioClass.play() # Hangs on this until closed in GUI operation.
+  saveTimer.setTitleWidget(None)
+  curses.curs_set(1) # Re-enable the actual cursor
   
-  if len(sys.argv) >= 1 and isExportArgument:
-    exportAudio(args.export, tArgs, None, None) # CLI operation
-  else:
-    # Keep in mind that menu will be None when it is not in GUI mode...
-    audioClass.play() # Hangs on this until closed in GUI operation.
-    curses.curs_set(1) # Re-enable the actual cursor
-  
-  
+  saveTimer.timerOff()
+  saveTimer.save()
+
   # When that exits
   tArgs.shutdown = True
   
