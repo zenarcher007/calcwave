@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.6.1"
+version = "1.6.2"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -29,7 +29,7 @@ import threading
 import time
 import wave
 import gc
-import calcwave.mathextensions
+from calcwave import mathextensions
 import json
 import itertools
 
