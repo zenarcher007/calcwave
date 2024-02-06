@@ -4,12 +4,12 @@ from setuptools import setup
 setup(
   name = 'calcwave',         # How you named your package folder (MyLib)
   packages = ['calcwave'], #setuptools.find_packages(),   # Chose the same as "name"
-  version = "1.5.1",
+  version = "1.6.3",
   license='gpl-3.0',
   description = 'A simple cross-platform utility for generating and playing audio using a mathematical formula ',
   author = 'Justin Douty',                   # Type in your name
   url = 'https://github.com/zenarcher007/calcwave',   # Provide either the link to your github or to your website
-  download_url = 'https://github.com/zenarcher007/calcwave/archive/refs/tags/v1.2.9.tar.gz',
+  download_url = 'https://github.com/zenarcher007/calcwave/archive/refs/tags/v1.6.0.tar.gz',
   keywords = ['cross-platform', 'audio synthesis', 'terminal', 'user-friendly'],   # Keywords that define your package best
   install_requires=[
     'numpy',
@@ -31,6 +31,6 @@ setup(
     'Programming Language :: Python :: 3.7',
     'Programming Language :: Python :: 3.8',
     'Programming Language :: Python :: 3.9',
-  ],
+  ]
   #packages=setuptools.find_packages(),
 )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.5.1"
+version = "1.6.3"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -29,7 +29,9 @@ import threading
 import time
 import wave
 import gc
-import mathextensions
+#import calcwave
+from calcwave import mathextensions
+#import calcwave.mathextensions
 import json
 import itertools
 
@@ -1135,27 +1137,14 @@ class threadArgs:
     self.isGUI = False
     self.shutdown = False
     self.step = 1. # How much to increment x
-    self.functionTable = self.getFunctionTable()
+    #self.functionTable = self.getFunctionTable()
     self.evaluator = None
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
     self.lock = threading.Lock()
+
     
-  # Define functions available to eval here.
-  def getFunctionTable(self):
-    functionsDict = vars(math)
-    tri = lambda t: (2*(t%(2*math.pi)))/(2*math.pi)-1
-    functionsDict['tri'] = tri
-    functionsDict['saw'] = lambda t: 2*abs(tri(t))-1
-    functionsDict['sqr'] = lambda t: 1.0 if math.sin(t) > 0 else -1.0
-    functionsDict['abs'] = abs
- 
-    # Returns a random number between -1 and 1. Can be used to generate fuzz noises.
-    def rand():
-      return random.random() * 2 - 1
-    functionsDict["rand"] = rand
- 
-    return functionsDict
+  
 
 # Accepts CalcWave text input
 # Parses and evaluates Python syntax
@@ -1163,11 +1152,12 @@ class threadArgs:
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
   def __init__(self, text, symbolTable = vars(math)):
-    self.symbolTable = symbolTable
     self.text = text
     symbolTable['log'] = None
     symbolTable['x'] = 0
     symbolTable["main"] = 0
+    symbolTable.update(mathextensions.getFunctionTable())
+    self.symbolTable = symbolTable
     # Add 10 available persistent variables, P0-P9.
     # This limit is in place because if any names were allowed, the wrong P-variable could be set by mistake
     # while typing one starting with the same name.
@@ -1186,6 +1176,7 @@ class Evaluator:
 
     self.prog = compile(text, '<string>', 'exec', optimize=2)
 
+
   # Retrieves the current expression contents as a string
   def getText(self):
     return self.text
@@ -1201,8 +1192,8 @@ class Evaluator:
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
     self.symbolTable['x'] = x # Add x to the internal symbol table
-    for extension in dir(mathextensions):
-      self.symbolTable[str(extension)] = extension
+    #for extension in dir(mathextensions):
+    #  self.symbolTable[str(extension)] = extension
     exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
     return self.symbolTable["main"] # Return result
 
