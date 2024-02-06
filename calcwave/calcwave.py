@@ -1176,7 +1176,6 @@ class Evaluator:
 
     self.prog = compile(text, '<string>', 'exec', optimize=2)
 
-
   # Retrieves the current expression contents as a string
   def getText(self):
     return self.text
