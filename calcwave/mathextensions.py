@@ -1,6 +1,8 @@
 import math
 import random
 from collections import deque
+import numpy as np
+from numpy import linalg
 
 tri = lambda t: (2*(t%(2*math.pi)))/(2*math.pi)-1
 saw = lambda t: 2*abs(tri(t))-1
@@ -97,7 +99,6 @@ class Convolution:
     self.length = 0
     self.history = deque(maxlen = self.length)
 
-  # Disable cache_filter if you will be using the scale parameter when filter values will be changing dynamically (likely uncommon)
   def evaluate(self, y, filter):
     filtlen = len(filter)
     if filtlen != self.length: # If the length of the filter is changed, recreate the deque with new maxlen
@@ -108,17 +109,105 @@ class Convolution:
     if filtlen != len(self.history):
       return y # There is not yet enough history to perform the convolution. Wait until there is.
     #return np.dot(self.history, filter)
-    return sum([a*b for a, b in zip(filter, self.history)])
+    return np.convolve(self.history, filter, mode='valid')
+    #return sum([a*b for a, b in zip(filter, self.history)])
  
   @staticmethod
   def __callname__():
     return "conv"
+  
+# A simple history, that returns a deque of the last [length] values. You may want to convert this into a list.
+class History:
+  def __init__(self):
+    self.length = 0
+    self.history = None
+    self.initalized = False
+
+  def evaluate(self, y, length):
+    if self.initalized == False:
+      self.initalized = True
+      self.history = deque(maxlen = self.length)
+    self.history.append(y)
+    return self.history
+ 
+  @staticmethod
+  def __callname__():
+    return "history"
+    
+
+
+# Normalizes the wave for the specific history length n in O(1) time and O(n) memory
+# TODO: Even with optimizations, this is quite compute-intensive for Python.
+#       It might be a good idea to compile this into a C module
+class Normalize:
+  def __init__(self):
+    self.length = 0
+    self.history = None
+    self.initalized = False
+
+    self.mmax = 0
+    self.mmin = 0
+    self.msum = 0
+    self.maxcount = 0
+    self.mincount = 0
+
+  def evaluate(self, y, length):
+    if self.initalized == False:
+      self.initalized = True
+      self.history = deque(maxlen = length)
+
+    msum, mmin, mmax, mincount, maxcount = (self.msum, self.mmin, self.mmax, self.mincount, self.maxcount)
+    
+    if len(self.history) == length:
+      self.msum -= self.history[-1] # Subtract end from moving sum
+    self.history.append(y)
+    self.msum += y # Add to moving sum
+    
+    # Perform rolling min/max
+    if y > mmax:
+      maxcount = 0
+      mmax = y
+    if y < mmin:
+      mincount = 0
+      mmin = y
+    
+    # While the highest/lowest value is in the dequeue, it won't change. Once it leaves,
+    # the next highest/lowest will need to be recomputed.
+    if maxcount > length:
+      mmax = max(self.history)
+      maxcount = 0
+    if mincount > length:
+      mmin = min(self.history)
+      mincount = 0
+    
+    mincount+=1
+    maxcount+=1
+
+    if self.mmax == self.mmin:
+      self.msum, self.mmin, self.mmax, self.mincount, self.maxcount = (msum, mmin, mmax, mincount, maxcount)
+      return 0
+    
+    mean = msum / length
+    normalized = (y - mean) / (mmax - mmin)
+
+    #mean = sum(self.history) / length
+    #maxm, minm = (max(self.history), min(self.history))
+    #if maxm - minm < 0.1:
+    #  return 0
+    #normalized = (y - mean) / (maxm - minm)
+    self.msum, self.mmin, self.mmax, self.mincount, self.maxcount = (msum, mmin, mmax, mincount, maxcount)
+    return normalized*2
+ 
+  @staticmethod
+  def __callname__():
+    return "norm"
+
 
 # During compilation, a list of classes marked as having memistic capabilities.
 # Any calls to functions mapped within their getFunctionTable() will be mapped to a unique
 # instance of that class.
 def getMemoryClasses():
-  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant]
+  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize]
 
 # During compilation, a mapping of functions available to the user
 def getFunctionTable():
