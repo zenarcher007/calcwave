@@ -80,13 +80,8 @@ class Convolution:
     self.filter = None
 
   # Disable cache_filter if you will be using the scale parameter when filter values will be changing dynamically (likely uncommon)
-  def evaluate(self, y, filter, scale = 1, cache_filter = True):
-    filtlen = len(filter) * scale
-    
-    if scale != 1 and self.filter == None or cache_filter == False:
-      self.filter = [val for val in filter for _ in range(scale)] # https://stackoverflow.com/a/2449125
-    if self.filter:
-      filter = self.filter
+  def evaluate(self, y, filter):
+    filtlen = len(filter)
 
     if filtlen != self.length: # If the length of the filter is changed, recreate the deque with new maxlen
       oldh = self.history
@@ -94,7 +89,6 @@ class Convolution:
       self.history.extend(list(oldh))
     self.history.append(y)
     if filtlen != len(self.history):
-      self.filter = None
       return y # There is not yet enough history to perform the convolution. Wait until there is.
     return sum([a*b for a, b in zip(filter, self.history)])
  
