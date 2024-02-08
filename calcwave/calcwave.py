@@ -35,6 +35,7 @@ from calcwave import mathextensions
 #import calcwave.mathextensions
 import json
 import itertools
+import time
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -1955,7 +1956,7 @@ class graphButtonMenuItem(BasicMenuItem):
     super().onBeginEdit()
     return "Toggling graph..."
 
-  # Currently disabled ; doesn't work in a thread...
+  # Currently disabled ; plt.plot doesn't work in a thread...
   def graphThreadRunner(self, tArgs, audioClass):
     plt.ion()
     plt.show()
@@ -2259,8 +2260,14 @@ class maybeCalcIterator(object):
     self.curr = end if step < 0 else start
     self.minVal, self.maxVal = minVal, maxVal
     self.exceptionHandler = lambda x: 0 if not exceptionHandler else exceptionHandler
+    self.max_clip = False
+    self.min_clip = False
   def __iter__(self):
     return self
+  def get_clipping(self): # Returns whether clipping has occured since the last call of this function (min, max)
+    minc, maxc = self.min_clip, self.max_clip
+    self.min_clip, self.max_clip = (False, False)
+    return minc, maxc
   def __next__(self):
     if(self.curr > self.end or self.curr < self.start):
       raise StopIteration()
@@ -2268,8 +2275,10 @@ class maybeCalcIterator(object):
     try:
       v = self.func(x)
       if self.minVal and v < self.minVal:
+        self.min_clip = True
         v = self.minVal
       elif self.maxVal and v > self.maxVal:
+        self.max_clip = True
         v = self.maxVal
       return v
     
@@ -2320,7 +2329,9 @@ class AudioPlayer:
     #  audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
     X = [x for x in maybeCalcIterator(self.tArgs.start, self.tArgs.start+abs(self.tArgs.step) * (self.tArgs.frameSize-1), abs(self.tArgs.step), lambda x: x)]
     Y = [0.0] * self.tArgs.frameSize #[x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * self.tArgs.frameSize, self.tArgs.step, audioFunc)]
-    self.graph = plt.plot(X, Y)[0] #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
+    fig, ax = plt.subplots()
+    lines = ax.plot(X, Y)[0]
+    self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
 
   # TODO: Why doesn't it actually close?
   def graphOff(self):
@@ -2397,6 +2408,7 @@ class AudioPlayer:
       start, end, step, evaluator = (0,0,0, None)
       with tArgs.lock:
         start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+      graphtimer = time.time()
       while tArgs.shutdown == False:
 
         while self.paused == True:
@@ -2429,10 +2441,25 @@ class AudioPlayer:
               self.nextStart = iter.curr # Pick up where you left off this time
               break
           
-          if self.graph is not None and len(chunk) == frameSize: # Draw the graph if enabled
-            self.graph.set_ydata(chunk)
-            plt.draw()
-            plt.pause(0.01)
+          
+          
+          if self.graph is not None:
+            timenow = time.time()
+            if len(chunk) == frameSize and timenow > graphtimer+0.1: # Draw the graph if enabled
+              fig, ax, lines = self.graph
+              graphtimer = timenow
+              lines.set_ydata(chunk)
+              xd = lines.get_xdata()
+              min_clip, max_clip = iter.get_clipping()
+              while len(ax.lines) > 1:
+                ax.lines[1].remove()
+              if min_clip:
+                ax.plot([xd[0], xd[-1]], [-1, -1], linewidth = 1.5, color = 'red')
+
+              if max_clip:
+                ax.plot([xd[0], xd[-1]], [1, 1], linewidth = 1.5, color = 'red')
+              plt.draw()
+              plt.pause(0.01)
         if cont: continue
 
         
