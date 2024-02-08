@@ -1153,6 +1153,7 @@ class MemoryClassCompiler:
     self._func_count = {}
     self._reSET = set() # A set used for converting the reset() operation for resetting function call counts into O(1) time
 
+
   def run(self, fn_name, class_initializer, *args, **kwargs):
     # Handle pseudo-resetting all func_count values to 0
     if not fn_name in self._reSET:
@@ -1180,7 +1181,9 @@ class MemoryClassCompiler:
   def compile(self):
     for memoryClass in mathextensions.getMemoryClasses():
       fn_name = memoryClass.__callname__()
-      self.functionTable[fn_name] = lambda *args, **kwargs: self.run(fn_name, memoryClass, *args, **kwargs)
+      # https://stackoverflow.com/a/21054384
+      fncreate = lambda fn, mc: lambda *args, **kwargs: self.run(fn, mc, *args, **kwargs)
+      self.functionTable[fn_name] = fncreate(fn_name, memoryClass)
       self._func_count[fn_name] = 0
       self._instances[fn_name] = []
 
