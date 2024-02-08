@@ -26,6 +26,7 @@ import math
 import random
 import argparse
 import threading
+import regex as re
 import time
 import wave
 import gc
@@ -1145,6 +1146,47 @@ class threadArgs:
 
     
   
+class MemoryClassCompiler:
+  def __init__(self):
+    self._instances = {}
+    self.functionTable = {}
+    self._func_count = {}
+    self._reSET = set() # A set used for converting the reset() operation for resetting function call counts into O(1) time
+
+  def run(self, fn_name, class_initializer, *args, **kwargs):
+    # Handle pseudo-resetting all func_count values to 0
+    if not fn_name in self._reSET:
+      self._func_count[fn_name] = 0
+      self._reSET.add(fn_name)
+    
+    # Get list of instances of the memory class (equal to the number of times the function is called in user code)
+    ilist = self._instances[fn_name]
+    
+    # Create new instance of memory class for each greater number of calls of the function in user code
+    count = self._func_count[fn_name]
+    if count > len(ilist)-1:
+      self._instances[fn_name].append(class_initializer())
+    clazz = self._instances[fn_name][count]
+    self._func_count[fn_name] += 1 # Increment to next instance
+    
+    # Call memory class's evaluate()
+    return clazz.evaluate(*args, **kwargs)
+  
+  # Pseudo-resets the function call counts in O(1) time. Call this before a new evaluation takes place.
+  def reset(self):
+    self._reSET = set()
+
+  # Adds mappings from each desired function name to a function that calls from a list of instances of each respective class
+  def compile(self):
+    for memoryClass in mathextensions.getMemoryClasses():
+      fn_name = memoryClass.__callname__()
+      self.functionTable[fn_name] = lambda *args, **kwargs: self.run(fn_name, memoryClass, *args, **kwargs)
+      self._func_count[fn_name] = 0
+      self._instances[fn_name] = []
+
+  def getFunctionTable(self):
+    return self.functionTable
+
 
 # Accepts CalcWave text input
 # Parses and evaluates Python syntax
@@ -1153,26 +1195,16 @@ class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
   def __init__(self, text, symbolTable = vars(math)):
     self.text = text
-    symbolTable['log'] = None
-    symbolTable['x'] = 0
-    symbolTable["main"] = 0
-    symbolTable.update(mathextensions.getFunctionTable())
     self.symbolTable = symbolTable
-    # Add 10 available persistent variables, P0-P9.
-    # This limit is in place because if any names were allowed, the wrong P-variable could be set by mistake
-    # while typing one starting with the same name.
-    # Note that this feature was removed because it didn't make much sense - how do you initialize these variables, guarantee
-    # particular types, or prevent accidental assignments?
-    #symbolTable["P0"] = 0
-    #symbolTable["P1"] = 0
-    #symbolTable["P2"] = 0
-    #symbolTable["P3"] = 0
-    #symbolTable["P4"] = 0
-    #symbolTable["P5"] = 0
-    #symbolTable["P6"] = 0
-    #symbolTable["P7"] = 0
-    #symbolTable["P8"] = 0
-    #symbolTable["P9"] = 0
+
+    #symbolTable['log'] = None
+    self.symbolTable['x'] = 0
+    self.symbolTable["main"] = 0
+    self.symbolTable.update(mathextensions.getFunctionTable())
+
+    self.memory_class = MemoryClassCompiler()
+    self.memory_class.compile()
+    self.symbolTable.update(self.memory_class.getFunctionTable())
 
     self.prog = compile(text, '<string>', 'exec', optimize=2)
 
@@ -1181,19 +1213,20 @@ class Evaluator:
     return self.text
 
   # Gets the last logged value, or the last computed value if none was specified
+  # Note: 'log' is Deprecated
   def getLog(self):
-    log = self.symbolTable['log']
-    if log is None:
-      return str(self.symbolTable['main'])
-    else:
-      return str(self.symbolTable['log'])
+    return str(self.symbolTable['main'])
+    #log = self.symbolTable['log']
+    #if log is None:
+    #  return str(self.symbolTable['main'])
+    #else:
+    #  return str(self.symbolTable['log'])
 
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
     self.symbolTable['x'] = x # Add x to the internal symbol table
-    #for extension in dir(mathextensions):
-    #  self.symbolTable[str(extension)] = extension
     exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
+    self.memory_class.reset()
     return self.symbolTable["main"] # Return result
 
 
