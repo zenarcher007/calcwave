@@ -1254,13 +1254,13 @@ class WindowManager:
   
     rows, cols = self.scr.getmaxyx()
     #Initialize text editor
-    self.editor = TextEditor(Box(rowSize = rows - 6, colSize = cols, rowStart = 1, colStart = 0))
+    self.editor = TextEditor(Box(rowSize = rows - 8, colSize = cols, rowStart = 1, colStart = 0))
   
     #Initialize info display window
-    self.infoDisplay = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
+    self.infoDisplay = InfoDisplay(Box(rowSize = 4, colSize = cols, rowStart = rows - 4, colStart = 0))
     self.tArgs.output_fd = self.infoDisplay.getWriteFD()
 
-    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass, self.infoDisplay, exportDtype = exportDtype)
+    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 7, colStart = 0), tArgs, audioClass, self.infoDisplay, exportDtype = exportDtype)
     
     self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu, audioClass), daemon=True)
     self.thread.start()
@@ -1303,7 +1303,7 @@ class WindowManager:
         successful = self.focused.type(ch)
         if successful and self.focused == self.editor:
           p = self.editor.getPos()
-          self.infoDisplay.updateInfo(f"Line: {p.row}, Col: {p.col}, Scroll: {self.editor.scrollOffset}")
+          self.infoDisplay.updateInfo(f"Line: {p.row+1}, Col: {p.col}, Scroll: {self.editor.scrollOffset}")
           if isArrowKey:
             continue
           self.tArgs.SaveTimer.clearSaveMsg()
@@ -1538,11 +1538,8 @@ def chunker(generator, n):
 
 def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
   def exHandler(e):
-    #infoPad.updateInfo("An exception was thrown during processing. Continuing to write; " + str(ex))
-    #infoPad = None # Don't update anymore
-    #infoPad.updateInfo
     print(f"Exception at x={str(i)}: {type(e).__name__ }: {str(e)}") # Use print system
-    return 0
+
   start, end, step = (0,0,0)
   with tArgs.lock:
     start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
@@ -1551,8 +1548,9 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
   minVal, maxVal = (-1, 1)
   if dtype == float:
     minVal, maxVal = (None, None)
+
   iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = minVal, maxVal = maxVal, exceptionHandler=exHandler)
-  
+
   # Logic for progress display
   i = 0
   progressStart = 0 # The point the progress display will start from, so it doesn't go backwards
