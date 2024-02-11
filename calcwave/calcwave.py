@@ -627,7 +627,10 @@ class TextEditor(BasicEditor):
       #for i in range(30):
       #  print(cursorRow, colStart)
       #time.sleep(1)
-      self.win.chgat(cursorRow, colStart, max(colEnd - colStart, 1) , attribute)
+      try: # TODO: Fix uncommon illegal chgat that sometimes occurs when backspacing a line of code that contains both brackets and parentheses?
+        self.win.chgat(cursorRow, colStart, max(colEnd - colStart, 1), attribute)
+      except curses.error as e:
+        pass
       dataPt = dataPt.add_wrap_col(rowSize, width = max(1, rowLen)) # Go to next visible line
       cursorRow = cursorRow + 1
       if isLast: break
@@ -1128,6 +1131,8 @@ class InputPad:
 
 
 #To hold data that is passed to multiple running threads
+# Code should be able to check against the values here and gracefully handle unset variables.
+# Modification of variables should be generally avoided.
 class threadArgs:
   def __init__(self):
     #self.expression = ""
@@ -1143,6 +1148,8 @@ class threadArgs:
     self.evaluator = None
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
+    self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
+
     self.lock = threading.Lock()
 
     
@@ -1239,6 +1246,7 @@ class WindowManager:
   def __init__(self, tArgs, scr, initialExpr, audioClass, exportDtype = int):
     self.tArgs = tArgs
     self.scr = scr
+    self.oldStdout = None
     
     self.scr.keypad(True)
     self.scr.nodelay(True)
@@ -1250,13 +1258,30 @@ class WindowManager:
   
     #Initialize info display window
     self.infoDisplay = InfoDisplay(Box(rowSize = 2, colSize = cols, rowStart = rows - 2, colStart = 0))
+    self.tArgs.output_fd = self.infoDisplay.getWriteFD()
+
     self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 5, colStart = 0), tArgs, audioClass, self.infoDisplay, exportDtype = exportDtype)
     
-    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu), daemon=True)
+    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu, audioClass), daemon=True)
     self.thread.start()
     self.editor.setText(initialExpr)
     
-  def windowThread(self, tArgs, scr, menu):
+  # Controls whether to redirect all stdout to the infoDisplay
+  def setRedirectOutput(self, redirect: bool):
+    if redirect == True and self.oldStdout == None:
+      newWrite = self.infoDisplay.getWriteFD()
+      if not newWrite:
+        return False
+      self.oldStdout = sys.stdout
+      sys.stdout = os.fdopen(newWrite, 'w')
+    elif self.oldStdout != None:
+      oldfd = sys.stdout
+      sys.stdout = self.oldStdout
+      oldfd.close()
+      self.oldStdout = None
+    return True
+
+  def windowThread(self, tArgs, scr, menu, audioClass):
     self.scr.getch()
     self.scr.nodelay(0) # Turn delay mode on, such that curses will now wait for new keypresses on calls to getch()
     # Draw graphics
@@ -1290,6 +1315,8 @@ class WindowManager:
               tArgs.evaluator = evaluator # Install newly compiled code
               self.tArgs.SaveTimer.notify()
               self.tArgs.updateAudio = True
+              if audioClass.isPausedOnException():
+                audioClass.setPaused(False)
           except Exception as e:
             # Display exceptions to the user
             self.infoDisplay.updateInfo(f"[Compile error] {e.__class__.__name__}: {e.msg}\nAt line {e.lineno} col {e.offset}: {e.text}")
@@ -1510,14 +1537,21 @@ def chunker(generator, n):
     yield chunk
 
 def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
-  def exHandler(ex):
-    infoPad.updateInfo("An exception was thrown during processing. Continuing to write; " + str(ex))
-    infoPad = None # Don't update anymore
+  def exHandler(e):
+    #infoPad.updateInfo("An exception was thrown during processing. Continuing to write; " + str(ex))
+    #infoPad = None # Don't update anymore
+    #infoPad.updateInfo
+    print(f"Exception at x={str(i)}: {type(e).__name__ }: {str(e)}") # Use print system
     return 0
   start, end, step = (0,0,0)
   with tArgs.lock:
     start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
-  iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler=exHandler)
+  
+  # If datatype is a float, remove clipping to preserve data depth (clipping is still used in live mode)
+  minVal, maxVal = (-1, 1)
+  if dtype == float:
+    minVal, maxVal = (None, None)
+  iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = minVal, maxVal = maxVal, exceptionHandler=exHandler)
   
   # Logic for progress display
   i = 0
@@ -1539,15 +1573,18 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
     
     j = 0
     # Write wave file
+    oldtime = time.time()
     for chunk in chunker(iter, tArgs.frameSize):
       if dtype == float:
         file.write(struct.pack('<%df' % len(chunk), *chunk))
       elif dtype == int:
         #for o in chunk:
         #  print(o, file=sys.stderr)
-        chunk = [int(c*32767) for c in chunk]
-        file.write(struct.pack('<%dh' % len(chunk), *chunk))
-      if j % 120 == 0:
+        multiplyGen = (int(c*32767) for c in chunk)
+        file.write(struct.pack('<%dh' % len(chunk), *multiplyGen))
+      timenow = time.time()
+      if timenow > oldtime+0.25:
+        oldtime = timenow
         infoPad.updateInfo("Writing (" + str(int(abs(i-progressStart)/(abs(end-start))*100)) + "%)...")
       i = i + len(chunk)
       j = j + 1
@@ -1818,7 +1855,8 @@ class ProgressBar(BasicMenuItem):
         blockWidth = blockWidth * 5
       
     if ch == 32: # Space
-      self.audioClass.setPaused(not(self.audioClass.isPaused())) # This function includes a lock, and must be done separately
+      with self.audioClass.getLock():
+        self.audioClass.setPaused(not(self.audioClass.isPaused())) # This function includes a lock, and must be done separately
       self.infoDisplay.updateInfo(("Paused" if self.audioClass.isPaused() else "Unpaused") + " audio player!\n" + self.getCtrlsMsg())
       return
     elif chr(ch) == 'v' or chr(ch) == 'V':
@@ -2222,17 +2260,72 @@ class InfoDisplay:
   # Make info display window (rowSize, colSize, rowStart, colStart)
     self.win = curses.newwin(shape.rowSize, shape.colSize, shape.rowStart, shape.colStart)
     self.otherWindow = None
-    
+    self._r, self._w = os.pipe()
+    self.shutdown = False
+    self._has_new_message = False
+    self.lock = threading.Lock()
+
     # Set the background and text color of the display
     if curses.has_colors():
       curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
       self.win.bkgd(' ', curses.color_pair(1))
+
+    # For now, lines written will be deleted off the screen when scrolling,
+    # until perhaps a selection / scrolling mechanism is implemented.
+    self.win.scrollok(True)
+    self.thread = threading.Thread(target=self.writeThread, args = (self._r, self.win), daemon=True)
+    self.thread.start()
+    self.thread2 = threading.Thread(target=self.refreshThread, args = (self.win,), daemon=True)
+    self.thread2.start()
+  
+
+
+  def __del__(self):
+    self.shutdown = True
+    os.write(self._w, b"Shutting Down...")
+    #with open(self._w) as stream:
+    #  print("Shutting Down...", file = stream) # This is really to wake up the reader
+    self.thread.join()
+    os.close(self._w)
+    self.thread2.join()
     
     
   # If you tell it what window to go back to, it will retain
   # the cursor focus.
   def setMainWindow(self, window):
     self.otherWindow = window
+
+  def getWriteFD(self):
+    return self._w # Must be opened with os.fdopen(... , 'w')
+  
+  def refreshThread(self, win):
+    while self.shutdown == False:
+      time.sleep(0.2) # Rate limiting because curses sometimes does weird things with multithreaded updates
+      if self._has_new_message:
+        with self.lock:
+          self._has_new_message = False
+          win.refresh()
+
+  def writeThread(self, reader, win):
+    #win = curses.newwin(self.shape.rowSize, self.shape.colSize, self.shape.rowStart, self.shape.colStart)
+    win.scrollok(True)
+    try:
+      with os.fdopen(reader, 'r') as r:
+        while self.shutdown == False:
+          for line in r:
+            if self.shutdown: break
+            with self.lock:
+              self.win.scrollok(True)
+              for i in range(0, len(line), self.shape.colSize):
+                win.scroll(1)
+                self.win.addstr(self.shape.rowSize - 1, 0, line[max(0, i - self.shape.colSize) : -1])
+              self._has_new_message = True
+            #win.refresh()
+            
+    except Exception as e:
+      print("EXCEPTION IN INFODISPLAY WRITER: " + str(e), file = sys.stderr)
+
+    
   
 # Updates text on the info display window
 # window is the infoDisplay window
@@ -2242,8 +2335,14 @@ class InfoDisplay:
     #if len(text) >= maxLen:
     #  text = text[0:maxLen-1]
     self.win.erase()
+    #text = text + "\n"
+    #os.write(self._w, bytes(text.encode('UTF-8')))
+    #return
     try:
-      self.win.addstr(0, 0, text) # Display text
+      with self.lock:
+        self.win.scrollok(False)
+        self.win.addstr(0, 0, text) # Display text
+        self.win.scrollok(True)
     except curses.error:
       pass # Python Curses does not provide the functions necessary to ensure the cursor is not updated beyond the width of the window (https://stackoverflow.com/a/54412404/16386050) 
     self.win.refresh()
@@ -2255,11 +2354,12 @@ class InfoDisplay:
   # Sort of like Python range(), but can work with any number, including floats
   # Returns 0 if there was an exception evaluating the function (hence "maybe")
 class maybeCalcIterator(object):
-  def __init__(self, start, end, step, func, minVal = None, maxVal = None, exceptionHandler = None):
+  def __init__(self, start, end, step, func, minVal = None, maxVal = None, exceptionHandler = None, repeatOnException = False):
     self.start, self.end, self.step, self.func = start, end, step, func
     self.curr = end if step < 0 else start
     self.minVal, self.maxVal = minVal, maxVal
-    self.exceptionHandler = lambda x: 0 if not exceptionHandler else exceptionHandler
+    self.exceptionHandler = lambda e: 0 if not exceptionHandler else exceptionHandler(e)
+    self.repeatOnException = repeatOnException
     self.max_clip = False
     self.min_clip = False
   def __iter__(self):
@@ -2283,7 +2383,11 @@ class maybeCalcIterator(object):
       return v
     
     except Exception as e:
-      return self.exceptionHandler(e)
+      #print(self.exceptionHandler)
+      self.exceptionHandler(e)
+      if self.repeatOnException: # Undo last step
+        self.curr = self.curr - self.step
+      return 0
 
 #Thread generating and playing audio
 class AudioPlayer:
@@ -2293,6 +2397,7 @@ class AudioPlayer:
     self.paused = False
     self.graph = None
     self.isGraphEnabled = None
+    self.is_paused_on_error = False
     #self.enableGraph()
     #self.lock = threading.Lock()
     self.nextStart = None
@@ -2305,6 +2410,16 @@ class AudioPlayer:
   def enableGraph(self):
     with threading.Lock():
       self.isGraphEnabled = True
+
+  def pauseOnException(self, e):
+    r = ""
+    if self.is_paused_on_error:
+      r = " (repeat)" # This is really rudimentary. There's a bit of a race issue between the WindowManager and this,
+      # so for now, it just spams you with the message a few times to ensure it sticks on the InfoDisplay
+    print(f"[paused] Runtime Exception at x={str(self.index)}: {type(e).__name__}: {str(e)}{r}")
+    self.setPaused(True)
+    self.is_paused_on_error = True
+    # TODO: Make it display the error message in the display. This function will be disabled until this is implemented.
   
   def disableGraph(self):
     with threading.Lock():
@@ -2330,6 +2445,7 @@ class AudioPlayer:
     X = [x for x in maybeCalcIterator(self.tArgs.start, self.tArgs.start+abs(self.tArgs.step) * (self.tArgs.frameSize-1), abs(self.tArgs.step), lambda x: x)]
     Y = [0.0] * self.tArgs.frameSize #[x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * self.tArgs.frameSize, self.tArgs.step, audioFunc)]
     fig, ax = plt.subplots()
+    ax.set_ylim(bottom = -1, top = 1)
     lines = ax.plot(X, Y)[0]
     self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
 
@@ -2352,14 +2468,17 @@ class AudioPlayer:
   def play(self):
     self.audioThread(self.tArgs,)
   
+  def isPausedOnException(self):
+    return self.is_paused_on_error
+
   # Note that this doesn't use a lock by default for performance. However, you can manually retrive one using autoPlayer.getLock()
   def isPaused(self):
     return self.paused
 
-  # Set this to True to pause
+  # Set this to True to pause. Note: A lock is not used autmatically. Please manually aquire the lock for this class if needed.
   def setPaused(self, paused):
-    with self.getLock():
-      self.paused = paused
+    self.paused = paused
+    self.is_paused_on_error = False
 
   #def getAudioFunc(self):
   #  try: # Don't error-out on an empty text box
@@ -2428,7 +2547,7 @@ class AudioPlayer:
               start = self.nextStart
             self.nextStart = None
 
-        iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = None)
+        iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = self.pauseOnException, repeatOnException = True)
         for chunk in chunker(iter, tArgs.frameSize):
           stream.write( struct.pack('<%df' % len(chunk), *chunk) )
           self.updateGraphState() # Have this thread manage the graph
@@ -2477,119 +2596,6 @@ class AudioPlayer:
 
     
 
-  def audioThreadOld(self, tArgs):
-    p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paFloat32,
-                    channels = tArgs.channels,
-                    rate = tArgs.rate,
-                    output = True,
-                    frames_per_buffer = tArgs.frameSize)
-    
-    value = 0.0
-    oldTime = 0
-    frameCount = 0
-    
-    #Thanks to https://stackoverflow.com/a/12467755 by Ohad
-    #for a much more efficient eval() for performance improvements
-    #exp_as_func = eval('lambda x: ' + tArgs.expression)
-###    exp_as_func = self.getAudioFunc()
-    exp_as_func = None
-    with tArgs.lock:
-      exp_as_func = tArgs.evaluator
-    
-    try: #Make breaking out of the infinate loop possible by a keyboard interrupt
-      #exp_as_func = eval('lambda x: ' + tArgs.expression)
-      while tArgs.shutdown is False: # Main loop
-        result = []
-        #if abs(tArgs.end - tArgs.start < tArgs.frameSize) or tArgs.end <= tArgs.start:
-        #  sys.stdout.write("Error: Invalid range!")
-        #  tArgs.shutdown = True
-        #  break
-        if tArgs.shutdown:
-          break
-          
-        #for self.index in range(tArgs.start, tArgs.end, 1):
-        while self.index >= tArgs.start and self.index <= tArgs.end: # Loop over range
-          try:
-            if tArgs.evaluator: ###
-###            value = exp_as_func(self.index) # This is where the waveform values are actually calculated
-               value = exp_as_func.evaluate(self.index)
-              # for an input value, substituted for x
-            else:
-              value = 0
-          except:
-            pass
-            
-          
-          if not(isinstance(value, float)):
-            value = 0
-          
-          # Limit to prevent going over the system-set volume level
-          if value > 1:
-            value = 1
-          elif value < -1:
-            value = -1
-            
-          result.append(value)
-         # frameCount = frameCount + 1
-          if frameCount >= tArgs.frameSize:
-            frameCount = 0
-            if tArgs.shutdown == True:
-              sys.exit()
-
-            #if self.graph is not None: # Graph?
-              #self.drawGraph(self.index,tArgs.end+self.tArgs.step*10000, self.tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
-              #self.drawGraph(self.index, tArgs.start, tArgs.end, tArgs.step, (exp_as_func if exp_as_func is not None else lambda x: 0))
-            try: # Set the new expression for next time
-###              exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
-                 with tArgs.lock:
-                   exp_as_func = tArgs.evaluator
-            except:
-              pass
-            chunk = np.array(result)
-
-            try: # This try statement may not be needed if better verification is made beforehand...
-              stream.write( chunk.astype(np.float32).tobytes() )
-            except TypeError:
-              time.sleep(0.5)
-            self.updateGraphState() # Have this thread manage the graph
-            if self.graph is not None and len(result) == self.tArgs.frameSize: # Draw the graph if enabled # TODO: len(result) should ALWAYS be equal to frameSize...
-              self.graph.set_ydata(result)
-              plt.draw()
-              plt.pause(0.01) 
-            result = []
-          
-          if tArgs.shutdown:
-            break
-          
-          paused = False
-          with self.lock:
-            paused = self.paused
-          while paused == True or (tArgs.evaluator.getText() == "0" and tArgs.shutdown == False):
-            paused = self.paused # Basically relaxed read
-            # Wait to become unpaused
-            time.sleep(0.2)
-            if tArgs.shutdown == True:
-              self.setPaused(False)
-          
-          self.index = self.index + tArgs.step
-          frameCount = frameCount + 1
-        if tArgs.step < 0: # Allow going backwards
-          self.index = self.tArgs.end
-        else:
-          self.index = self.tArgs.start
-          
-    except (KeyboardInterrupt, SystemExit):
-      pass
-    finally:
-      tArgs.shutdown = True
-      stream.stop_stream()
-      stream.close()
-      p.terminate()
-      sys.stderr.write("Audio player shut down.\n")
-        
-      
-    
 
 
 
@@ -2674,12 +2680,16 @@ def main(argv = None):
     curses.start_color()
     curses.use_default_colors()
 
+  window = None
   try:
     # rowSize, colSize, rowStart, colStart
     #Start the GUI input thread
     window = WindowManager(tArgs, scr, tArgs.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
+    window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
     saveTimer.setTitleWidget(window.menu.title)
   except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
+    if window != None:
+      window.setRedirectOutput(False)
     curses.curs_set(1) # Re-enable the actual cursor
     curses.echo()
     curses.nocbreak()
@@ -2691,6 +2701,7 @@ def main(argv = None):
     
   # Keep in mind that menu will be None when it is not in GUI mode...
   audioClass.play() # Hangs on this until closed in GUI operation.
+  window.setRedirectOutput(False)
   saveTimer.setTitleWidget(None)
   curses.curs_set(1) # Re-enable the actual cursor
   
@@ -2702,6 +2713,7 @@ def main(argv = None):
   
   if window:
     window.thread.join()
+  window.stopCursesSettings(scr)
     
 
 if __name__ == "__main__":
