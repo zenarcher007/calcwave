@@ -134,11 +134,55 @@ class History:
   def __callname__():
     return "history"
     
+class Delay:
+  def __init__(self):
+    self.history = None
+    self.initalized = False
+    self.length = 0
 
+  def evaluate(self, y, lengths, volumes = [1]):
+    # Upgrade to list if lengths is a scalar
+    if not hasattr(lengths, "__len__"):
+      lengths = [lengths]
+    #volumes = np.array(volumes)
+    # Normalize volumes such that the sum of all its elements is 1
+    sv = sum(volumes)
+    volumes = [v / sv for v in volumes]
 
-# Normalizes the wave for the specific history length n in O(1) time and O(n) memory
-# TODO: Even with optimizations, this is quite compute-intensive for Python.
+    if len(lengths) != len(volumes) and len(volumes) != 1:
+      raise ValueError('"lengths" and "volumes" must be lists of the same length')
+
+    if self.initalized == False:
+      self.initalized = True
+      maxlen = max(lengths)
+      self.length = maxlen
+      self.history = deque(maxlen = maxlen+1)
+    self.history.append(y)
+    #print(len(self.history), self.length+1)
+    hl = len(self.history)
+    if hl != self.length+1:
+      return y # Wait until history is long enough
+    
+    #if hl == 1 or True:
+    arr = self.history
+    # This has actually shown to be significantly faster than using numpy in this case.
+    if len(volumes) == 1:
+      return sum( (arr[lengths[i]]*volumes[0] for i in range(len(lengths))) )
+    else:
+      return sum( (arr[lengths[i]]*volumes[i] for i in range(len(lengths))) )
+    #else: # Convert to numpy array to prevent likely worse than O(n) computation time from many random lookups
+    #  arr = np.array(self.history)
+    #  return np.sum(arr[lengths] * volumes)
+
+  
+  @staticmethod
+  def __callname__():
+    return "delay"
+
+# Normalizes the wave for the specific history length n in (generally) O(1) time and O(n) memory
+# TODO: Even with optimizations, this is a bit compute-intensive in Python.
 #       It might be a good idea to compile this into a C module
+#       ... or wait until Numba supports deque
 class Normalize:
   def __init__(self):
     self.length = 0
@@ -207,9 +251,9 @@ class Normalize:
 # Any calls to functions mapped within their getFunctionTable() will be mapped to a unique
 # instance of that class.
 def getMemoryClasses():
-  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize]
+  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize, Delay]
 
-# During compilation, a mapping of functions available to the user
+# During compilation, a mapping of functions (not using the memory system) available to the user
 def getFunctionTable():
   return {"tri": tri,
           "saw": saw,
