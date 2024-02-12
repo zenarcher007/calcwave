@@ -148,6 +148,7 @@ class Delay:
     # Normalize volumes such that the sum of all its elements is 1
     sv = sum(volumes)
     volumes = [v / sv for v in volumes]
+    list.reverse(volumes)
 
     if len(lengths) != len(volumes) and len(volumes) != 1:
       raise ValueError('"lengths" and "volumes" must be lists of the same length')
