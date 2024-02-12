@@ -166,7 +166,7 @@ class SaveTimer:
       self.titleWidget.refresh()
 
   # Loads from the file - returns new threadArgs object
-  def load(self):
+  def load(self, audio_file = None):
     t = threadArgs()
     dict = None
     with open(self.filepath, 'r') as file:
@@ -177,11 +177,42 @@ class SaveTimer:
     t.rate = dict['rate']
     t.channels = dict['channels']
     t.frameSize = dict['frameSize']
-    t.evaluator = Evaluator(dict['expr'])
     t.SaveTimer = self
     self.tArgs = t
-    return t
+    if audio_file is not None:
+      self.loadAudioFile(audio_file)
+      self.tArgs.evaluator = Evaluator(dict['expr'], audio_array = self.tArgs.AUDIO_ARRAY)
+    return self.tArgs
+  
+  def loadAudioFile(self, path: str):
+    try:
+      # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
+      import soundfile as sf
+    except ImportError as e:
+      print("Error importing pydub module, needed for loading audio. You may install this using \"python3 -m pip install soundfile\". Note: the ffmpeg library will be needed for this.")
+      raise e
+    #filename, file_extension = os.path.splitext(path)
+    #a = pydub.AudioSegment.from_file(path)
+    #arr = a.get_array_of_samples()
+
+    # Note: samplerate is not used for now... This could cause issues...
+    arr, samplerate = sf.read(path, always_2d = True)
+    channels = arr.shape[1]
+    audioarr = arr.reshape((-1, channels)).astype(float)
+    #print(arr.shape)
+    #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
+    #nparr = np.array(arr)
+    #print(audioarr.dtype, arr.dtype)
+    #print(np.mean(audioarr))
+    #time.sleep(2)
+    if not np.issubdtype(arr.dtype, np.floating):
+      audioarr /= np.iinfo(arr.dtype).max # Scale between -1 and 1 as float
+      #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
+      #time.sleep(2)
       
+    self.tArgs.AUDIO_ARRAY = audioarr
+
+                                     
   
 
 
@@ -1157,6 +1188,7 @@ class threadArgs:
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
     self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
+    self.AUDIO_ARRAY = None
 
     self.lock = threading.Lock()
     global global_display_lock 
@@ -1214,13 +1246,16 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, symbolTable = vars(math)):
+  def __init__(self, text, symbolTable = vars(math), audio_array = None):
     self.text = text
     self.symbolTable = symbolTable
 
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
     self.symbolTable["main"] = 0
+    if audio_array is not None:
+      audio_array.setflags(write = False)
+      self.symbolTable['AUDIO_IN'] = audio_array
     self.symbolTable.update(mathextensions.getFunctionTable())
 
     self.memory_class = MemoryClassCompiler()
@@ -1323,7 +1358,7 @@ class WindowManager:
           # Display cursor position
           text = self.editor.getText()
           try:
-            evaluator = Evaluator(text) # Compile on-screen code
+            evaluator = Evaluator(text, audio_array = tArgs.AUDIO_ARRAY) # Compile on-screen code
             with tArgs.lock:
               tArgs.evaluator = evaluator # Install newly compiled code
               self.tArgs.SaveTimer.notify()
@@ -1745,7 +1780,10 @@ class startRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if value > self.tArgs.end: # Don't allow crossing start / end ranges
+      if self.tArgs.AUDIO_ARRAY is not None and value < 0:
+        actionMsg = "Start range cannot be less than starting bound of AUDIO_IN. Value updated to 0"
+        self.updateValue(0)
+      elif value > self.tArgs.end: # Don't allow crossing start / end ranges
         actionMsg = "Start range cannot be greater than end range!"
         self.updateValue(self.tArgs.start)
       else:
@@ -1784,7 +1822,10 @@ class endRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if value < self.tArgs.start: # Don't allow crossing start / end ranges
+      if self.tArgs.AUDIO_ARRAY is not None and value >= len(self.tArgs.AUDIO_ARRAY):
+        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.tArgs.AUDIO_ARRAY))
+        self.updateValue(len(self.tArgs.AUDIO_ARRAY))
+      elif value < self.tArgs.start: # Don't allow crossing start / end ranges
         actionMsg = "End range cannot be less than start range!"
         self.updateValue(self.tArgs.end)
       else:
@@ -2641,6 +2682,8 @@ def main(argv = None):
   parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
   
   parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
+  parser.add_argument('-f', '--audiofile', type = str, default = None,
+                      help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
   parser.add_argument('-x', '--expr', type = str, default = "0",
                       help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
   parser.add_argument("-s", "--start", type = int, default = -100000,
@@ -2666,10 +2709,9 @@ def main(argv = None):
   # The class that is passed to other threads and holds
   # information about how to play sound and act
   tArgs = threadArgs()
-  
   args = parser.parse_args() #Parse arguments
-  #Set variables
   tArgs.evaluator = Evaluator("main = " + args.expr)
+  #Set variables
   tArgs.start = args.start
   tArgs.end = args.end
   #tArgs.channels = args.channels # Note that right now, "channels" is not used.
@@ -2692,10 +2734,26 @@ def main(argv = None):
     if os.path.isfile(args.file):
       # Load from file path if exists; else, leave to be created.
       # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
-      tArgs = saveTimer.load() # Load from file passed into SaveTimer
+      tArgs = saveTimer.load(audio_file = args.audiofile) # Load from file passed into SaveTimer
+    else:
+      if args.audiofile:
+        saveTimer.loadAudioFile(args.audiofile)
+        tArgs.AUDIO_ARRAY = saveTimer.tArgs.AUDIO_ARRAY
     saveTimer.timerOn() # Start autosave timer
-      
-  
+
+    #print(tArgs.evaluator)
+    #time.sleep(2)
+
+  # Update starting setup if defaults
+  if tArgs.AUDIO_ARRAY is not None:
+    if tArgs.evaluator:
+      if tArgs.evaluator.getText() == "main = " + args.expr:
+        tArgs.start = 0
+        tArgs.end = len(tArgs.AUDIO_ARRAY)-1
+        if args.expr == "0":
+          tArgs.evaluator = Evaluator("main = sum(AUDIO_IN[:][int(x)])/len(AUDIO_IN) # Channels", audio_array = tArgs.AUDIO_ARRAY)
+        else:
+          tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
   sys.stderr.write("Starting GUI mode\n")
 
   window = None
