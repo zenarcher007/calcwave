@@ -241,7 +241,8 @@ class BasicEditor:
   def highlightChar(self, p : Point):
     self.oldHighlightPos = p
     self.win.chgat(p.row, p.col, 1, curses.A_UNDERLINE)
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
   def restoreLastHighlight(self):
     self.win.chgat(self.oldHighlightPos.row, self.oldHighlightPos.col, 1, curses.A_NORMAL)
@@ -250,12 +251,14 @@ class BasicEditor:
   def hideCursor(self):
     self.cursorHidden = True
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_NORMAL) # Un-highlight new position
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
   def showCursor(self):
     self.cursorHidden = False
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight cursor position
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
   def onFocus(self):
     self.showCursor()
@@ -317,7 +320,8 @@ class BasicEditor:
       self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight new position
     self.oldCursorPos = self.cursorPos
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Highlight new position
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
 
 class LineEditor(BasicEditor):
@@ -635,7 +639,8 @@ class TextEditor(BasicEditor):
       cursorRow = cursorRow + 1
       if isLast: break
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Refresh cursor, in case it drew on top of it
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
       
       
 
@@ -911,7 +916,8 @@ class InputPad:
   
   # Calls a window refresh
   def refresh(self):
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     
   # Moves the cursor right, wrapping to the next line if needed.
   def goRight(self):
@@ -1077,7 +1083,8 @@ class InputPad:
     xWidth = self.shape.colSize
     #self.curPos(self.boxY1+int(column / xWidth, self.boxX1+(column % xWidth)))
     self.curPos(int(column / xWidth), column % xWidth)
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
                 
   
   # Does the equivalent of a backspace. Includes workarounds for the many bugs it had...
@@ -1125,7 +1132,8 @@ class InputPad:
       self.unHighlight()
       self.insert(0, ch)
       self.goRight()
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 ##################################################################
 
 
@@ -1151,6 +1159,8 @@ class threadArgs:
     self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
 
     self.lock = threading.Lock()
+    global global_display_lock 
+    global_display_lock = threading.Lock()
 
     
   
@@ -1266,6 +1276,9 @@ class WindowManager:
     self.thread.start()
     self.editor.setText(initialExpr)
     
+  def getInfoDisplay(self):
+    return self.infoDisplay
+
   # Controls whether to redirect all stdout to the infoDisplay
   def setRedirectOutput(self, redirect: bool):
     if redirect == True and self.oldStdout == None:
@@ -1338,10 +1351,11 @@ class WindowManager:
       pass
     finally:
       sys.stderr.write("Shutting down GUI...\n")
-      self.stopCursesSettings(self.scr)
+      #self.stopCursesSettings(self.scr)
       self.tArgs.shutdown = True
       
   # Changes curses settings back in order to restore terminal state
+  # Call this when you are done with this object!
   def stopCursesSettings(self, scr):
     curses.echo()
     curses.nocbreak()
@@ -1371,7 +1385,8 @@ class BasicMenuItem:
  # Calls refresh() on the window object
  # this must be lightweight, as it may be called often.
   def refresh(self): 
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
   # Standard hooks to hide and show the cursor, if your widget has one.
   def hideCursor(self):
@@ -1383,7 +1398,8 @@ class BasicMenuItem:
   def displayText(self, text):
     self.win.erase()
     self.win.addstr(0, 0, text)
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
 
   def isOneshot(self):
     return False # By default, this item can enter and exit focus, rather than immediately exiting.
@@ -1397,7 +1413,8 @@ class BasicMenuItem:
     for row in range(0, self.shape.rowSize):
       self.win.chgat(0, row, self.shape.colSize, curses.A_REVERSE)
     curses.use_default_colors()
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     return "Hover Message"
   
   # Called when UIManager tells the cursor to leave your item
@@ -1406,7 +1423,8 @@ class BasicMenuItem:
     for row in range(0, self.shape.rowSize):
       self.win.chgat(0, row, self.shape.colSize, curses.A_NORMAL)
     curses.use_default_colors()
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     
   # Sets messages displayed in the infoDisplay when selected or activated
  #def setToolTip(self, text):
@@ -1906,7 +1924,8 @@ class ProgressBar(BasicMenuItem):
       #self.actionMsg = "Progress bar visibility turned on!"
     self.win.erase()
     self.win.addstr(0, 0, text)
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     
   def progressThread(self, tArgs, audioClass):
     index = 0
@@ -1953,7 +1972,8 @@ class ProgressBar(BasicMenuItem):
     self.win.erase()
     self.win.addstr(0, 0, text) # Display text
     self.win.addch(0, maxLen - 2, '}')
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     # Unlock thread
     #self.lock.release()
     
@@ -2055,16 +2075,18 @@ class TitleWindow:
     self.win.clear()
     self.win.addstr("Calcwave v" + version + self.message)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
-    curses.use_default_colors()
-    self.win.refresh()
+    with global_display_lock:
+      curses.use_default_colors()
+      self.win.refresh()
     
   # Use custom text
   def customTitle(self, text):
     self.win.clear()
     self.win.addstr(text + self.message)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
-    curses.use_default_colors()
-    self.win.refresh()
+    with global_display_lock:
+      curses.use_default_colors()
+      self.win.refresh()
 
   # Appends a mandantory message to the end of the title
   def setMessage(self, text):
@@ -2261,6 +2283,7 @@ class InfoDisplay:
     self._r, self._w = os.pipe()
     self.shutdown = False
     self._has_new_message = False
+    self.message_cv = threading.Condition()
     self.lock = threading.Lock()
 
     # Set the background and text color of the display
@@ -2271,9 +2294,9 @@ class InfoDisplay:
     # For now, lines written will be deleted off the screen when scrolling,
     # until perhaps a selection / scrolling mechanism is implemented.
     self.win.scrollok(True)
-    self.thread = threading.Thread(target=self.writeThread, args = (self._r, self.win), daemon=True)
+    self.thread = threading.Thread(target=self.writeThread, args = (self._r, self.win, self.message_cv), daemon=True)
     self.thread.start()
-    self.thread2 = threading.Thread(target=self.refreshThread, args = (self.win,), daemon=True)
+    self.thread2 = threading.Thread(target=self.refreshThread, args = (self.win, self.message_cv), daemon=True)
     self.thread2.start()
   
 
@@ -2285,6 +2308,9 @@ class InfoDisplay:
     #  print("Shutting Down...", file = stream) # This is really to wake up the reader
     self.thread.join()
     os.close(self._w)
+    self._has_new_message = True
+    with self.message_cv:
+      self.message_cv.notify()
     self.thread2.join()
     
     
@@ -2296,15 +2322,18 @@ class InfoDisplay:
   def getWriteFD(self):
     return self._w # Must be opened with os.fdopen(... , 'w')
   
-  def refreshThread(self, win):
+  def refreshThread(self, win, message_cv):
     while self.shutdown == False:
-      time.sleep(0.2) # Rate limiting because curses sometimes does weird things with multithreaded updates
+      time.sleep(0.1) # Rate limiting to prevent UI lock up and improve performance
+      with message_cv:
+        message_cv.wait()
       if self._has_new_message:
         with self.lock:
           self._has_new_message = False
-          win.refresh()
+          with global_display_lock:
+            win.refresh()
 
-  def writeThread(self, reader, win):
+  def writeThread(self, reader, win, message_cv):
     #win = curses.newwin(self.shape.rowSize, self.shape.colSize, self.shape.rowStart, self.shape.colStart)
     win.scrollok(True)
     try:
@@ -2318,6 +2347,8 @@ class InfoDisplay:
                 win.scroll(1)
                 self.win.addstr(self.shape.rowSize - 1, 0, line[max(0, i - self.shape.colSize) : -1])
               self._has_new_message = True
+            with message_cv:
+              message_cv.notify()
             #win.refresh()
             
     except Exception as e:
@@ -2343,7 +2374,8 @@ class InfoDisplay:
         self.win.scrollok(True)
     except curses.error:
       pass # Python Curses does not provide the functions necessary to ensure the cursor is not updated beyond the width of the window (https://stackoverflow.com/a/54412404/16386050) 
-    self.win.refresh()
+    with global_display_lock:
+      self.win.refresh()
     if self.otherWindow:
       self.otherWindow.refresh()
       
@@ -2389,8 +2421,9 @@ class maybeCalcIterator(object):
 
 #Thread generating and playing audio
 class AudioPlayer:
-  def __init__(self, tArgs):
+  def __init__(self, tArgs, info_update_fn = None):
     self.tArgs = tArgs
+    self.info_update_fn = info_update_fn
     self.index = 0
     self.paused = False
     self.graph = None
@@ -2409,12 +2442,15 @@ class AudioPlayer:
     with threading.Lock():
       self.isGraphEnabled = True
 
+  def set_info_update_fn(self, info_update):
+    self.info_update_fn = info_update
+
   def pauseOnException(self, e):
-    r = ""
-    if self.is_paused_on_error:
-      r = " (repeat)" # This is really rudimentary. There's a bit of a race issue between the WindowManager and this,
-      # so for now, it just spams you with the message a few times to ensure it sticks on the InfoDisplay
-    print(f"[paused] Runtime Exception at x={str(self.index)}: {type(e).__name__}: {str(e)}{r}")
+    msg = f"[paused] Runtime Exception at x={str(self.index)}:\n{type(e).__name__}: {str(e)}"
+    if self.info_update_fn:
+      self.info_update_fn(msg)
+    else:
+      print(msg)
     self.setPaused(True)
     self.is_paused_on_error = True
     # TODO: Make it display the error message in the display. This function will be disabled until this is implemented.
@@ -2665,9 +2701,6 @@ def main(argv = None):
   window = None
   scr = None
   menu = None
-
-  # Initialize AudioPlayer
-  audioClass = AudioPlayer(tArgs)
   
 
   scr = curses.initscr()
@@ -2677,6 +2710,9 @@ def main(argv = None):
   if curses.has_colors():
     curses.start_color()
     curses.use_default_colors()
+
+  # Initialize AudioPlayer
+  audioClass = AudioPlayer(tArgs)
 
   window = None
   try:
@@ -2695,9 +2731,10 @@ def main(argv = None):
     curses.endwin()
     print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
     raise e
-    
-    
+  
   # Keep in mind that menu will be None when it is not in GUI mode...
+  if window:
+    audioClass.set_info_update_fn(window.getInfoDisplay().updateInfo)
   audioClass.play() # Hangs on this until closed in GUI operation.
   window.setRedirectOutput(False)
   saveTimer.setTitleWidget(None)
