@@ -26,7 +26,7 @@ import math
 import random
 import argparse
 import threading
-import regex as re
+import re
 import time
 import wave
 import gc
@@ -166,7 +166,7 @@ class SaveTimer:
       self.titleWidget.refresh()
 
   # Loads from the file - returns new threadArgs object
-  def load(self, audio_file = None):
+  def load(self, audio_file = []):
     t = threadArgs()
     dict = None
     with open(self.filepath, 'r') as file:
@@ -179,11 +179,15 @@ class SaveTimer:
     t.frameSize = dict['frameSize']
     t.SaveTimer = self
     self.tArgs = t
-    if audio_file is not None:
-      self.loadAudioFile(audio_file)
+    if audio_file != []:
+      for file in audio_file:
+        self.loadAudioFile(file)
       self.tArgs.evaluator = Evaluator(dict['expr'], audio_array = self.tArgs.AUDIO_ARRAY)
+    else:
+      self.tArgs.evaluator = Evaluator(dict['expr'])
     return self.tArgs
   
+  # Loads a new audio file and adds it to tArgs.AUDIO_ARRAY. Returns the updated AUDIO_ARRAY
   def loadAudioFile(self, path: str):
     try:
       # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
@@ -210,7 +214,8 @@ class SaveTimer:
       #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
       #time.sleep(2)
       
-    self.tArgs.AUDIO_ARRAY = audioarr
+    self.tArgs.AUDIO_ARRAY.append(audioarr)
+    return audioarr
 
                                      
   
@@ -1188,7 +1193,7 @@ class threadArgs:
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
     self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
-    self.AUDIO_ARRAY = None
+    self.AUDIO_ARRAY = []
 
     self.lock = threading.Lock()
     global global_display_lock 
@@ -1246,15 +1251,16 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, symbolTable = vars(math), audio_array = None):
+  def __init__(self, text, symbolTable = vars(math), audio_array = []):
     self.text = text
     self.symbolTable = symbolTable
 
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
     self.symbolTable["main"] = 0
-    if audio_array is not None:
-      audio_array.setflags(write = False)
+    if audio_array != []:
+      for arr in audio_array:
+        arr.setflags(write = False)
       self.symbolTable['AUDIO_IN'] = audio_array
     self.symbolTable.update(mathextensions.getFunctionTable())
 
@@ -2682,7 +2688,7 @@ def main(argv = None):
   parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
   
   parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
-  parser.add_argument('-f', '--audiofile', type = str, default = None,
+  parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
                       help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
   parser.add_argument('-x', '--expr', type = str, default = "0",
                       help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
@@ -2701,15 +2707,19 @@ def main(argv = None):
                       help = "The audio buffer frame size to use. This is the length of the list of floats, not the memory it will take.")
   parser.add_argument("--cli", default = False, action = "store_true",
                       help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching curses mode")
-  
+
 
   if argv is None:
     argv = sys.argv
   
   # The class that is passed to other threads and holds
   # information about how to play sound and act
-  tArgs = threadArgs()
+
   args = parser.parse_args() #Parse arguments
+
+  expr_is_default = args.expr == "0"
+
+  tArgs = threadArgs()
   tArgs.evaluator = Evaluator("main = " + args.expr)
   #Set variables
   tArgs.start = args.start
@@ -2728,32 +2738,43 @@ def main(argv = None):
       sys.exit(1)
     exportAudio(args.file, tArgs, None, None, type = float if args.float32 else int) # CLI operation
     sys.exit(0)
-  else:
+  else: # GUI mode
     saveTimer = SaveTimer(2, args.file, tArgs) # Save every 2 seconds if changes are present
     tArgs.SaveTimer = saveTimer
     if os.path.isfile(args.file):
       # Load from file path if exists; else, leave to be created.
       # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
-      tArgs = saveTimer.load(audio_file = args.audiofile) # Load from file passed into SaveTimer
+      tArgs = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
+      print(tArgs.evaluator)
+      expr_is_default = False
     else:
-      if args.audiofile:
-        saveTimer.loadAudioFile(args.audiofile)
-        tArgs.AUDIO_ARRAY = saveTimer.tArgs.AUDIO_ARRAY
+      audio_array = []
+      for file in args.audiofile:
+        # Loads the audio file into the linked global store (and returns the entire updated audio array)
+        saveTimer.loadAudioFile(file[0])
     saveTimer.timerOn() # Start autosave timer
 
     #print(tArgs.evaluator)
     #time.sleep(2)
 
-  # Update starting setup if defaults
-  if tArgs.AUDIO_ARRAY is not None:
-    if tArgs.evaluator:
-      if tArgs.evaluator.getText() == "main = " + args.expr:
-        tArgs.start = 0
-        tArgs.end = len(tArgs.AUDIO_ARRAY)-1
-        if args.expr == "0":
-          tArgs.evaluator = Evaluator("main = sum(AUDIO_IN[:][int(x)])/len(AUDIO_IN) # Channels", audio_array = tArgs.AUDIO_ARRAY)
-        else:
-          tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
+  # Update starting setup if defaults and audio files are specified
+  if tArgs.AUDIO_ARRAY is not []:
+    #if tArgs.evaluator:
+    #  if tArgs.evaluator.getText() == "main = " + args.expr:
+    if expr_is_default:
+      tArgs.start = 0
+      tArgs.end = max(len(data)-1 for data in tArgs.AUDIO_ARRAY)
+      if args.expr == "0":
+        # Make a similar Evaluator, this time with the audio_array attached, and a default program
+        tArgs.evaluator = Evaluator("""
+# Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
+audio_file = AUDIO_IN[0] # Read audio file data #0
+channels = audio_file[:] # An array of per-channel samples arrays
+num_channels = len(channels) # The number of channels
+main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = tArgs.AUDIO_ARRAY)
+      else:
+        # Make a similar Evaluator, this time with the audio_array attached, but preserve the user-set text
+        tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
   sys.stderr.write("Starting GUI mode\n")
 
   window = None
