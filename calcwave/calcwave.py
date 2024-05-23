@@ -2749,16 +2749,17 @@ def main(argv = None):
       expr_is_default = False
     else:
       audio_array = []
-      for file in args.audiofile:
-        # Loads the audio file into the linked global store (and returns the entire updated audio array)
-        saveTimer.loadAudioFile(file[0])
+      if args.audiofile:
+        for file in args.audiofile:
+          # Loads the audio file into the linked global store (and returns the entire updated audio array)
+          saveTimer.loadAudioFile(file[0])
     saveTimer.timerOn() # Start autosave timer
 
     #print(tArgs.evaluator)
     #time.sleep(2)
 
   # Update starting setup if defaults and audio files are specified
-  if tArgs.AUDIO_ARRAY is not []:
+  if not tArgs.AUDIO_ARRAY in ([],None):
     #if tArgs.evaluator:
     #  if tArgs.evaluator.getText() == "main = " + args.expr:
     if expr_is_default:
