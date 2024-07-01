@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.6.3"
+version = "1.6.4"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -2679,158 +2679,165 @@ class AudioPlayer:
 
 
 
+# The runner class for CalcWave
+class CalcWave:
+  def __init__(self):
+    pass
 
 
-
-
-def main(argv = None):
-  
-  parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
-  
-  parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
-  parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
-                      help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
-  parser.add_argument('-x', '--expr', type = str, default = "0",
-                      help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
-  parser.add_argument("-s", "--start", type = int, default = -100000,
-                      help = "The lower range of x to start from.")
-  parser.add_argument("-e", "--end", type = int, default = 100000,
-                      help = "The upper range of x to end at.")
-  #parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
-  #                    help = "Export to specified file as wav. File extension is automatically added.")
-  #parser.add_argument("--channels", type = int, default = 1,
-  #                    help = "The number of audio channels to use")
-  parser.add_argument("-d", "--float32", action="store_true", help = "Export audio as float32 wav (still clipped between -1 and 1)")
-  parser.add_argument("--rate", type = int, default = 44100,
-                      help = "The audio rate to use")
-  parser.add_argument("--buffer", type = int, default = 1024,
-                      help = "The audio buffer frame size to use. This is the length of the list of floats, not the memory it will take.")
-  parser.add_argument("--cli", default = False, action = "store_true",
-                      help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching curses mode")
-
-
-  if argv is None:
-    argv = sys.argv
-  
-  # The class that is passed to other threads and holds
-  # information about how to play sound and act
-
-  args = parser.parse_args() #Parse arguments
-
-  expr_is_default = args.expr == "0"
-
-  tArgs = threadArgs()
-  tArgs.evaluator = Evaluator("main = " + args.expr)
-  #Set variables
-  tArgs.start = args.start
-  tArgs.end = args.end
-  #tArgs.channels = args.channels # Note that right now, "channels" is not used.
-  tArgs.channels = 1
-  tArgs.rate = args.rate
-  tArgs.frameSize = args.buffer
+  def main(self, argv = None):
+    if argv[0] == sys.argv[0]:
+      argv.pop(0)
+    parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
     
-  
-  # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
-  saveTimer = None
-  if args.cli:
-    if args.expr == "":
-      print("Error: --expr is required with --cli", file = sys.stderr)
-      sys.exit(1)
-    exportAudio(args.file, tArgs, None, None, type = float if args.float32 else int) # CLI operation
-    sys.exit(0)
-  else: # GUI mode
-    saveTimer = SaveTimer(2, args.file, tArgs) # Save every 2 seconds if changes are present
-    tArgs.SaveTimer = saveTimer
-    if os.path.isfile(args.file):
-      # Load from file path if exists; else, leave to be created.
-      # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
-      tArgs = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
-      print(tArgs.evaluator)
-      expr_is_default = False
-    else:
-      audio_array = []
+    parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
+    parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
+                        # New Proposal: help = '-f <VAR_NAME>:<filepath> The audio file to load into the interpereter. Named by VAR_NAME, this will be available in the editor scope, and must be a valid Python variable name. Shape is (channels, audio_array). This data will be stored as a "read-only"** numpy array.')
+                        help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
+    parser.add_argument('-x', '--expr', type = str, default = "0",
+                        help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
+    parser.add_argument("-b", "--beg", type = int, default = -100000,
+                        help = "The lower range of x to start from.")
+    parser.add_argument("-e", "--end", type = int, default = 100000,
+                        help = "The upper range of x to end at.")
+    #parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
+    #                    help = "Export to specified file as wav. File extension is automatically added.")
+    #parser.add_argument("--channels", type = int, default = 1,
+    #                    help = "The number of audio channels to use")
+    parser.add_argument("-d", "--float32", action="store_true", help = "Export audio as float32 wav (still clipped between -1 and 1)")
+    parser.add_argument("--rate", type = int, default = 44100,
+                        help = "The audio rate to use")
+    parser.add_argument("--buffer", type = int, default = 1024,
+                        help = "The audio buffer frame size to use. This is the length of the chunk of floats, not the memory it will take.")
+    parser.add_argument("--cli", default = False, action = "store_true",
+                        help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching curses mode")
+
+
+    if argv is None:
+      argv = sys.argv
+    
+    # The class that is passed to other threads and holds
+    # information about how to play sound and act
+
+    args = parser.parse_args(argv) #Parse arguments
+
+    expr_is_default = args.expr == "0"
+
+    tArgs = threadArgs()
+    tArgs.evaluator = Evaluator("main = " + args.expr)
+    #Set variables
+    tArgs.start = args.beg
+    tArgs.end = args.end
+    #tArgs.channels = args.channels # Note that right now, "channels" is not used.
+    tArgs.channels = 1
+    tArgs.rate = args.rate
+    tArgs.frameSize = args.buffer
+      
+    
+    # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
+    saveTimer = None
+    if args.cli:
+      if args.expr == "":
+        print("Error: --expr is required with --cli", file = sys.stderr)
+        sys.exit(1)
+      exportAudio(args.file, tArgs, None, None, type = float if args.float32 else int) # CLI operation
+      sys.exit(0)
+    else: # GUI mode
+      saveTimer = SaveTimer(2, args.file, tArgs) # Save every 2 seconds if changes are present
+      tArgs.SaveTimer = saveTimer
+      if os.path.isfile(args.file): # If the calcwave project file specified is present
+        # Load from file path if exists; else, leave to be created.
+        # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
+        #if args.audiofile:
+        #  tArgs = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
+        #print(tArgs.evaluator)
+        expr_is_default = False
+      #else:
       if args.audiofile:
         for file in args.audiofile:
           # Loads the audio file into the linked global store (and returns the entire updated audio array)
           saveTimer.loadAudioFile(file[0])
-    saveTimer.timerOn() # Start autosave timer
+      saveTimer.timerOn() # Start autosave timer
 
-    #print(tArgs.evaluator)
-    #time.sleep(2)
+      #print(tArgs.evaluator)
+      #time.sleep(2)
 
-  # Update starting setup if defaults and audio files are specified
-  if not tArgs.AUDIO_ARRAY in ([],None):
-    #if tArgs.evaluator:
-    #  if tArgs.evaluator.getText() == "main = " + args.expr:
-    if expr_is_default:
-      tArgs.start = 0
-      tArgs.end = max(len(data)-1 for data in tArgs.AUDIO_ARRAY)
-      if args.expr == "0":
-        # Make a similar Evaluator, this time with the audio_array attached, and a default program
-        tArgs.evaluator = Evaluator("""
-# Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
-audio_file = AUDIO_IN[0] # Read audio file data #0
-channels = audio_file[:] # An array of per-channel samples arrays
-num_channels = len(channels) # The number of channels
-main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = tArgs.AUDIO_ARRAY)
-      else:
-        # Make a similar Evaluator, this time with the audio_array attached, but preserve the user-set text
-        tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
-  sys.stderr.write("Starting GUI mode\n")
+    # Update starting setup if defaults and audio files are specified
+    if not tArgs.AUDIO_ARRAY in ([],None):
+      #if tArgs.evaluator:
+      #  if tArgs.evaluator.getText() == "main = " + args.expr:
+      if expr_is_default:
+        tArgs.start = 0
+        tArgs.end = max(len(data)-1 for data in tArgs.AUDIO_ARRAY)
+        if args.expr == "0":
+          # Make a similar Evaluator, this time with the audio_array attached, and a default program
+          tArgs.evaluator = Evaluator("""
+  # Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
+  audio_file = AUDIO_IN[0] # Read audio file data #0
+  channels = audio_file[:] # An array of per-channel samples arrays
+  num_channels = len(channels) # The number of channels
+  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = tArgs.AUDIO_ARRAY)
+        else:
+          # Make a similar Evaluator, this time with the audio_array attached, but preserve the user-set text
+          tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
+    sys.stderr.write("Starting GUI mode\n")
 
-  window = None
-  scr = None
-  menu = None
-  
-
-  scr = curses.initscr()
-  curses.curs_set(0) # Disable the actual cursor
-  rows, cols = scr.getmaxyx()
+    window = None
+    scr = None
+    menu = None
     
-  if curses.has_colors():
-    curses.start_color()
-    curses.use_default_colors()
 
-  # Initialize AudioPlayer
-  audioClass = AudioPlayer(tArgs)
+    scr = curses.initscr()
+    curses.curs_set(0) # Disable the actual cursor
+    rows, cols = scr.getmaxyx()
+      
+    if curses.has_colors():
+      curses.start_color()
+      curses.use_default_colors()
 
-  window = None
-  try:
-    # rowSize, colSize, rowStart, colStart
-    #Start the GUI input thread
-    window = WindowManager(tArgs, scr, tArgs.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
-    window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
-    saveTimer.setTitleWidget(window.menu.title)
-  except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
-    if window != None:
-      window.setRedirectOutput(False)
+    # Initialize AudioPlayer
+    audioClass = AudioPlayer(tArgs)
+
+    window = None
+    try:
+      # rowSize, colSize, rowStart, colStart
+      #Start the GUI input thread
+      window = WindowManager(tArgs, scr, tArgs.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
+      window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
+      saveTimer.setTitleWidget(window.menu.title)
+    except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
+      if window != None:
+        window.setRedirectOutput(False)
+      curses.curs_set(1) # Re-enable the actual cursor
+      curses.echo()
+      curses.nocbreak()
+      scr.keypad(False)
+      curses.endwin()
+      print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
+      raise e
+    
+    # Keep in mind that menu will be None when it is not in GUI mode...
+    if window:
+      audioClass.set_info_update_fn(window.getInfoDisplay().updateInfo)
+    audioClass.play() # Hangs on this until closed in GUI operation.
+    window.setRedirectOutput(False)
+    saveTimer.setTitleWidget(None)
     curses.curs_set(1) # Re-enable the actual cursor
-    curses.echo()
-    curses.nocbreak()
-    scr.keypad(False)
-    curses.endwin()
-    print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
-    raise e
-  
-  # Keep in mind that menu will be None when it is not in GUI mode...
-  if window:
-    audioClass.set_info_update_fn(window.getInfoDisplay().updateInfo)
-  audioClass.play() # Hangs on this until closed in GUI operation.
-  window.setRedirectOutput(False)
-  saveTimer.setTitleWidget(None)
-  curses.curs_set(1) # Re-enable the actual cursor
-  
-  saveTimer.timerOff()
-  saveTimer.save()
-
-  # When that exits
-  tArgs.shutdown = True
-  
-  if window:
-    window.thread.join()
-  window.stopCursesSettings(scr)
     
+    saveTimer.timerOff()
+    saveTimer.save()
+
+    # When that exits
+    tArgs.shutdown = True
+    
+    if window:
+      window.thread.join()
+    window.stopCursesSettings(scr)
+      
+
+def main(argv = None):
+  CalcWave().main(argv)
 
 if __name__ == "__main__":
   main()
-  
+    
