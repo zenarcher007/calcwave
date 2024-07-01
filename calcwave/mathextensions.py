@@ -115,6 +115,21 @@ class Convolution:
   @staticmethod
   def __callname__():
     return "conv"
+
+# Question: is it possible to get the start, end, and step attributes from a constructed range() object?
+# Answer: Yes.
+# Question: How?
+# Answer: The start and end are attributes of the range object itself. The step is an attribute of the iterator returned by calling __iter__() on the range object.
+# Example:
+# r = range(5)
+# print(r.start, r.stop, r.__iter__().step) # prints "0 5 1"
+class Mask:
+  def __init__(self):
+    pass
+  
+  def evaluate(self, y, range):
+    pass
+    # Return y if 
   
 # A simple history, that returns a deque of the last [length] values. You may want to convert this into a list.
 class History:

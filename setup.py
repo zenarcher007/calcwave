@@ -4,7 +4,7 @@ from setuptools import setup
 setup(
   name = 'calcwave',         # How you named your package folder (MyLib)
   packages = ['calcwave'], #setuptools.find_packages(),   # Chose the same as "name"
-  version = "1.6.3",
+  version = "1.6.4",
   license='gpl-3.0',
   description = 'A simple cross-platform utility for generating and playing audio using a mathematical formula ',
   author = 'Justin Douty',                   # Type in your name
