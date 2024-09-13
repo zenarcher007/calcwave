@@ -99,11 +99,11 @@ if not sys.argv.count('--cli'):
 
 # Checks every "delay" seconds, and saves to a file if flag has been set (it's not perfect)
 class SaveTimer:
-  def __init__(self, delay, filepath, threadArgs):
+  def __init__(self, delay, filepath, Config):
     self.delay = delay
     self.filepath = filepath
     self.pendingsave = False
-    self.tArgs = threadArgs
+    self.global_config = Config
     self.thread = None
     self.timerstate = False
     self.titleWidget = None # To display whether your code is saved
@@ -129,7 +129,7 @@ class SaveTimer:
       self.clearSaveMsg()
 
   def timerThread(self):
-    while self.tArgs.shutdown == False and self.timerstate == True:
+    while self.global_config.shutdown == False and self.timerstate == True:
       time.sleep(self.delay)
       if self.pendingsave:
         self.pendingsave = False
@@ -147,13 +147,13 @@ class SaveTimer:
   
   # Saves to the file
   def save(self):
-    dict = {"start": self.tArgs.start,
-            "end": self.tArgs.end,
-            "step": self.tArgs.step,
-            "rate": self.tArgs.rate,
-            "channels": self.tArgs.channels,
-            "frameSize": self.tArgs.frameSize,
-            "expr": self.tArgs.evaluator.getText()
+    dict = {"start": self.global_config.start,
+            "end": self.global_config.end,
+            "step": self.global_config.step,
+            "rate": self.global_config.rate,
+            "channels": self.global_config.channels,
+            "frameSize": self.global_config.frameSize,
+            "expr": self.global_config.evaluator.getText()
             }
     
     id = str(random.randint(1000,9999))
@@ -164,58 +164,6 @@ class SaveTimer:
     if self.titleWidget:
       self.titleWidget.setMessage("(Saved Last Compilation)")
       self.titleWidget.refresh()
-
-  # Loads from the file - returns new threadArgs object
-  def load(self, audio_file = []):
-    t = threadArgs()
-    dict = None
-    with open(self.filepath, 'r') as file:
-      dict = json.load(file)
-    t.start = dict['start']
-    t.end = dict['end']
-    t.step = dict['step']
-    t.rate = dict['rate']
-    t.channels = dict['channels']
-    t.frameSize = dict['frameSize']
-    t.SaveTimer = self
-    self.tArgs = t
-    if audio_file != []:
-      for file in audio_file:
-        self.loadAudioFile(file)
-      self.tArgs.evaluator = Evaluator(dict['expr'], audio_array = self.tArgs.AUDIO_ARRAY)
-    else:
-      self.tArgs.evaluator = Evaluator(dict['expr'])
-    return self.tArgs
-  
-  # Loads a new audio file and adds it to tArgs.AUDIO_ARRAY. Returns the updated AUDIO_ARRAY
-  def loadAudioFile(self, path: str):
-    try:
-      # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
-      import soundfile as sf
-    except ImportError as e:
-      print("Error importing pydub module, needed for loading audio. You may install this using \"python3 -m pip install soundfile\". Note: the ffmpeg library will be needed for this.")
-      raise e
-    #filename, file_extension = os.path.splitext(path)
-    #a = pydub.AudioSegment.from_file(path)
-    #arr = a.get_array_of_samples()
-
-    # Note: samplerate is not used for now... This could cause issues...
-    arr, samplerate = sf.read(path, always_2d = True)
-    channels = arr.shape[1]
-    audioarr = arr.reshape((-1, channels)).astype(float)
-    #print(arr.shape)
-    #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
-    #nparr = np.array(arr)
-    #print(audioarr.dtype, arr.dtype)
-    #print(np.mean(audioarr))
-    #time.sleep(2)
-    if not np.issubdtype(arr.dtype, np.floating):
-      audioarr /= np.iinfo(arr.dtype).max # Scale between -1 and 1 as float
-      #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
-      #time.sleep(2)
-      
-    self.tArgs.AUDIO_ARRAY.append(audioarr)
-    return audioarr
 
                                      
   
@@ -1177,7 +1125,7 @@ class InputPad:
 #To hold data that is passed to multiple running threads
 # Code should be able to check against the values here and gracefully handle unset variables.
 # Modification of variables should be generally avoided.
-class threadArgs:
+class Config:
   def __init__(self):
     #self.expression = ""
     self.start = -100000
@@ -1294,8 +1242,8 @@ class Evaluator:
 
 # Handles GUI
 class WindowManager:
-  def __init__(self, tArgs, scr, initialExpr, audioClass, exportDtype = int):
-    self.tArgs = tArgs
+  def __init__(self, global_config, scr, initialExpr, audioClass, exportDtype = int):
+    self.global_config = global_config
     self.scr = scr
     self.oldStdout = None
     
@@ -1309,11 +1257,11 @@ class WindowManager:
   
     #Initialize info display window
     self.infoDisplay = InfoDisplay(Box(rowSize = 4, colSize = cols, rowStart = rows - 4, colStart = 0))
-    self.tArgs.output_fd = self.infoDisplay.getWriteFD()
+    self.global_config.output_fd = self.infoDisplay.getWriteFD()
 
-    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 7, colStart = 0), tArgs, audioClass, self.infoDisplay, exportDtype = exportDtype)
+    self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 7, colStart = 0), global_config, audioClass, self.infoDisplay, exportDtype = exportDtype)
     
-    self.thread = threading.Thread(target=self.windowThread, args=(tArgs, scr, self.menu, audioClass), daemon=True)
+    self.thread = threading.Thread(target=self.windowThread, args=(global_config, scr, self.menu, audioClass), daemon=True)
     self.thread.start()
     self.editor.setText(initialExpr)
     
@@ -1335,7 +1283,7 @@ class WindowManager:
       self.oldStdout = None
     return True
 
-  def windowThread(self, tArgs, scr, menu, audioClass):
+  def windowThread(self, global_config, scr, menu, audioClass):
     self.scr.getch()
     self.scr.nodelay(0) # Turn delay mode on, such that curses will now wait for new keypresses on calls to getch()
     # Draw graphics
@@ -1345,13 +1293,13 @@ class WindowManager:
 
     self.focused = self.editor
     try:
-      while self.tArgs.shutdown is False:
+      while self.global_config.shutdown is False:
         ch = self.scr.getch()
 
         if ch == 27 and self.focused != self.menu: # Escape key
           self.infoDisplay.updateInfo("ESC recieved. Shutting down...")
-          with self.tArgs.lock:
-            self.tArgs.shutdown = True
+          with self.global_config.lock:
+            self.global_config.shutdown = True
           break
         isArrowKey = (ch == curses.KEY_UP or ch == curses.KEY_DOWN or ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT)
         successful = self.focused.type(ch)
@@ -1360,15 +1308,15 @@ class WindowManager:
           self.infoDisplay.updateInfo(f"Line: {p.row+1}, Col: {p.col}, Scroll: {self.editor.scrollOffset}")
           if isArrowKey:
             continue
-          self.tArgs.SaveTimer.clearSaveMsg()
+          self.global_config.SaveTimer.clearSaveMsg()
           # Display cursor position
           text = self.editor.getText()
           try:
-            evaluator = Evaluator(text, audio_array = tArgs.AUDIO_ARRAY) # Compile on-screen code
-            with tArgs.lock:
-              tArgs.evaluator = evaluator # Install newly compiled code
-              self.tArgs.SaveTimer.notify()
-              self.tArgs.updateAudio = True
+            evaluator = Evaluator(text, audio_array = global_config.AUDIO_ARRAY) # Compile on-screen code
+            with global_config.lock:
+              global_config.evaluator = evaluator # Install newly compiled code
+              self.global_config.SaveTimer.notify()
+              self.global_config.updateAudio = True
               if audioClass.isPausedOnException():
                 audioClass.setPaused(False)
           except Exception as e:
@@ -1393,7 +1341,7 @@ class WindowManager:
     finally:
       sys.stderr.write("Shutting down GUI...\n")
       #self.stopCursesSettings(self.scr)
-      self.tArgs.shutdown = True
+      self.global_config.shutdown = True
       
   # Changes curses settings back in order to restore terminal state
   # Call this when you are done with this object!
@@ -1494,9 +1442,9 @@ class BasicMenuItem:
 
 # A button to export audio as a WAV file, assuming you have the "wave" module installed.
 class exportButton(LineEditor, BasicMenuItem):
-  def __init__(self, shape: Box, tArgs, progressBar, infoDisplay, dtype):
+  def __init__(self, shape: Box, global_config, progressBar, infoDisplay, dtype):
     super().__init__(shape)
-    self.tArgs = tArgs
+    self.global_config = global_config
     self.infoPad = infoDisplay
     self.progressBar = progressBar
     self.setText("Export Audio")
@@ -1582,12 +1530,12 @@ class exportButton(LineEditor, BasicMenuItem):
       self.infoPad.updateInfo("Writing...")
     
     # Do in a separate thread?
-    thread = threading.Thread(target=exportAudio, args=(fullPath, self.tArgs, self.progressBar, self.infoPad, self.dtype), daemon = True)
+    thread = threading.Thread(target=exportAudio, args=(fullPath, self.global_config, self.progressBar, self.infoPad, self.dtype), daemon = True)
     thread.start()
     #exportAudio(fullPath)
     return actionMsg
     
-  # Accepts a generator, and returns chunk arrays of size n until depleted, courtesy of ChatGPT
+  # Accepts a generator, and returns chunk arrays of size n until depleted, courtesy as a convienence of ChatGPT
 def chunker(generator, n):
   while True:
     chunk = list(itertools.islice(generator, n))
@@ -1595,13 +1543,13 @@ def chunker(generator, n):
       break
     yield chunk
 
-def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
+def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
   def exHandler(e):
     print(f"Exception at x={str(i)}: {type(e).__name__ }: {str(e)}") # Use print system
 
   start, end, step = (0,0,0)
-  with tArgs.lock:
-    start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+  with global_config.lock:
+    start, end, step, evaluator = (global_config.start, global_config.end, global_config.step, global_config.evaluator)
   
   # If datatype is a float, remove clipping to preserve data depth (clipping is still used in live mode)
   minVal, maxVal = (-1, 1)
@@ -1626,12 +1574,12 @@ def exportAudio(fullPath, tArgs, progressBar, infoPad, dtype = int):
 
   with open(fullPath, 'wb') as file:
     totalsize = int((end - start) / step)
-    file.write(get_wav_header(totalsize, tArgs.rate, dtype))
+    file.write(get_wav_header(totalsize, global_config.rate, dtype))
     
     j = 0
     # Write wave file
     oldtime = time.time()
-    for chunk in chunker(iter, tArgs.frameSize):
+    for chunk in chunker(iter, global_config.frameSize):
       if dtype == float:
         file.write(struct.pack('<%df' % len(chunk), *chunk))
       elif dtype == int:
@@ -1660,7 +1608,7 @@ def get_wav_header(totalsize, sample_rate, dtype):
     b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ',
     16,  # size of 'fmt ' header
     3 if dtype == float else 1,  # format 3 = floating-point PCM
-    1,  # channels (tArgs.channels is not yet supported)
+    1,  # channels (global_config.channels is not yet supported)
     sample_rate,  # samples / second
     sample_rate * (4 if dtype == float else 2),  # bytes / second
     4 if dtype == float else 2,  # block alignment
@@ -1760,12 +1708,12 @@ class NumericalMenuSetting(NamedMenuSetting):
       if not(chr(ch) == '.' and self.valueType == "int"):
         super().type(ch)
 
-# A special case of a NamedMenuSetting that sets the start range in tArgs
+# A special case of a NamedMenuSetting that sets the start range in global_config
 class startRangeMenuItem(NumericalMenuSetting):
-  def __init__(self, shape: Box, name, tArgs):
+  def __init__(self, shape: Box, name, global_config):
     super().__init__(shape, name, "int")
     self.lock = threading.Lock()
-    self.tArgs = tArgs
+    self.global_config = global_config
 
   def getDisplayName(self):
     return "Start Value"
@@ -1786,26 +1734,26 @@ class startRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.tArgs.AUDIO_ARRAY is not None and value < 0:
+      if self.global_config.AUDIO_ARRAY is not None and value < 0:
         actionMsg = "Start range cannot be less than starting bound of AUDIO_IN. Value updated to 0"
         self.updateValue(0)
-      elif value > self.tArgs.end: # Don't allow crossing start / end ranges
+      elif value > self.global_config.end: # Don't allow crossing start / end ranges
         actionMsg = "Start range cannot be greater than end range!"
-        self.updateValue(self.tArgs.start)
+        self.updateValue(self.global_config.start)
       else:
         actionMsg = "Start range changed to " + str(value) + "."
         self.lastValue = str(value)
         with self.lock:
-          self.tArgs.start = value
+          self.global_config.start = value
       return actionMsg
 
 
-# A special case of a NamedMenuSetting that sets the end range in tArgs
+# A special case of a NamedMenuSetting that sets the end range in global_config
 class endRangeMenuItem(NumericalMenuSetting):
-  def __init__(self, shape: Box, name, tArgs):
+  def __init__(self, shape: Box, name, global_config):
     super().__init__(shape, name, "int")
     self.lock = threading.Lock()
-    self.tArgs = tArgs
+    self.global_config = global_config
     self.stepWin = None
     
   def onHoverEnter(self):
@@ -1828,26 +1776,26 @@ class endRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.tArgs.AUDIO_ARRAY is not None and value >= len(self.tArgs.AUDIO_ARRAY):
-        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.tArgs.AUDIO_ARRAY))
-        self.updateValue(len(self.tArgs.AUDIO_ARRAY))
-      elif value < self.tArgs.start: # Don't allow crossing start / end ranges
+      if self.global_config.AUDIO_ARRAY is not None and value >= len(self.global_config.AUDIO_ARRAY):
+        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.global_config.AUDIO_ARRAY))
+        self.updateValue(len(self.global_config.AUDIO_ARRAY))
+      elif value < self.global_config.start: # Don't allow crossing start / end ranges
         actionMsg = "End range cannot be less than start range!"
-        self.updateValue(self.tArgs.end)
+        self.updateValue(self.global_config.end)
       else:
         actionMsg = "End range changed to " + str(value) + "."
         self.lastValue = str(value)
         with self.lock:
-          self.tArgs.end = value
+          self.global_config.end = value
 
       return actionMsg
       
 
-  # A special case of a NamedMenuSetting that sets the step amount in tArgs
+  # A special case of a NamedMenuSetting that sets the step amount in global_config
 class stepMenuItem(NumericalMenuSetting):
-  def __init__(self, shape: Box, name, tArgs):
+  def __init__(self, shape: Box, name, global_config):
     super().__init__(shape, name, "float")
-    self.tArgs = tArgs
+    self.global_config = global_config
 
   # Tooltip Message Definitions
   def onBeginEdit(self):
@@ -1866,9 +1814,9 @@ class stepMenuItem(NumericalMenuSetting):
     else:
       self.updateValue(value)
       self.lastValue = str(value)
-      with self.tArgs.lock:
-        self.tArgs.step = value
-    return "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.tArgs.rate) + "hz."
+      with self.global_config.lock:
+        self.global_config.step = value
+    return "Step amount changed to " + str(value) + ". Note: baud rate is " + str(self.global_config.rate) + "hz."
     
     
     
@@ -1877,17 +1825,17 @@ class stepMenuItem(NumericalMenuSetting):
 
 # A ProgressBar that displays the current position of AudioPlayer's range
 class ProgressBar(BasicMenuItem):
-  def __init__(self, shape: Box, audioClass, tArgs, infoDisplay):
+  def __init__(self, shape: Box, audioClass, global_config, infoDisplay):
     super().__init__(shape)
     self.infoDisplay = infoDisplay
     self.lock = threading.Lock()
     self.audioClass = audioClass
     self.progressBarEnabled = True
-    self.tArgs = tArgs
+    self.global_config = global_config
     self.isEditing = False
     
     # Start progress bar thread
-    self.progressThread = threading.Thread(target=self.progressThread, args=(tArgs, audioClass), daemon=True)
+    self.progressThread = threading.Thread(target=self.progressThread, args=(global_config, audioClass), daemon=True)
     self.progressThread.start()
 
   def getDisplayName(self):
@@ -1909,9 +1857,9 @@ class ProgressBar(BasicMenuItem):
     #with self.lock:
     # Handle left/right stepping
     
-    blockWidth = self.tArgs.step
+    blockWidth = self.global_config.step
     if ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT:
-      range = abs(self.tArgs.end - self.tArgs.start)
+      range = abs(self.global_config.end - self.global_config.start)
       blockWidth = int(range / self.shape.colSize)
       # Use bigger increments if not paused
     if self.audioClass.isPaused() == False:
@@ -1932,18 +1880,18 @@ class ProgressBar(BasicMenuItem):
         index = index - blockWidth
       elif ch == curses.KEY_RIGHT or ch == curses.KEY_SRIGHT:
         index = index + blockWidth
-      if index < self.tArgs.start: # Limit between acceptable range
-        index = self.tArgs.start
-      elif index > self.tArgs.end:
-        index = self.tArgs.end
+      if index < self.global_config.start: # Limit between acceptable range
+        index = self.global_config.start
+      elif index > self.global_config.end:
+        index = self.global_config.end
       # Write back to audio player
       self.audioClass.index = index
       self.audioClass.nextStart = index
       self.audioClass.paused = True
-      self.tArgs.updateAudio = True
+      self.global_config.updateAudio = True
       if self.audioClass.isPaused():
         self.debugIndex(index) # Show debugging info about current index
-      self.updateIndex(index, self.tArgs.start, self.tArgs.end)
+      self.updateIndex(index, self.global_config.start, self.global_config.end)
     
   
   # Defines action to do when activated
@@ -1974,29 +1922,29 @@ class ProgressBar(BasicMenuItem):
     with global_display_lock:
       self.win.refresh()
     
-  def progressThread(self, tArgs, audioClass):
+  def progressThread(self, global_config, audioClass):
     index = 0
-    while self.tArgs.shutdown == False:
+    while self.global_config.shutdown == False:
     # Update menu index display
       time.sleep(0.25)
       #with self.lock:
-      #if self.tArgs.shutdown == False and self.progressBarEnabled and pause == False:
+      #if self.global_config.shutdown == False and self.progressBarEnabled and pause == False:
       #  with self.lock:
       #    index = audioClass.index
-      #  self.updateIndex(index, tArgs.start, tArgs.end)
+      #  self.updateIndex(index, global_config.start, global_config.end)
       index = audioClass.index # relaxed read # TODO: How to actually use relaxed atomics in Python?
-      if self.tArgs.shutdown == False and self.progressBarEnabled and not self.audioClass.isPaused():
-        self.updateIndex(index, tArgs.start, tArgs.end)
+      if self.global_config.shutdown == False and self.progressBarEnabled and not self.audioClass.isPaused():
+        self.updateIndex(index, global_config.start, global_config.end)
       
       # Display blank while not playing anything
-      if self.tArgs.evaluator == None and self.progressBarEnabled == True: # TODO: targs.evaluator is probably never going to be None. How to check if it's a placeholder evaluator?
+      if self.global_config.evaluator == None and self.progressBarEnabled == True: # TODO: global_config.evaluator is probably never going to be None. How to check if it's a placeholder evaluator?
         self.toggleVisibility()
-        while self.tArgs.evaluator == None:
+        while self.global_config.evaluator == None:
           time.sleep(0.2)
         self.toggleVisibility()
 
   def debugIndex(self, i):
-    evl = self.tArgs.evaluator
+    evl = self.global_config.evaluator
     controlsMsg = self.getCtrlsMsg()
     try:
       evl.evaluate(i)
@@ -2026,9 +1974,9 @@ class ProgressBar(BasicMenuItem):
     
 class graphButtonMenuItem(BasicMenuItem):
   isGraphThreadRunning = False
-  def __init__(self, shape: Box, tArgs, audioClass):
+  def __init__(self, shape: Box, global_config, audioClass):
     super().__init__(shape)
-    self.tArgs = tArgs
+    self.global_config = global_config
     self.audioClass = audioClass
     self.isGraphThreadRunning = False
     self.graphThread = None
@@ -2060,14 +2008,14 @@ class graphButtonMenuItem(BasicMenuItem):
     return "Toggling graph..."
 
   # Currently disabled ; plt.plot doesn't work in a thread...
-  def graphThreadRunner(self, tArgs, audioClass):
+  def graphThreadRunner(self, global_config, audioClass):
     plt.ion()
     plt.show()
     while(self.isGraphThreadRunning):
       exp_as_func = audioClass.getAudioFunc() # Update expression
       if exp_as_func is not None:
         curr = audioClass.index # Get current position
-        plt.plot([x for x in self.calcIterator(curr, curr+10000, tArgs.step, exp_as_func)])
+        plt.plot([x for x in self.calcIterator(curr, curr+10000, global_config.step, exp_as_func)])
         plt.draw()
       time.sleep(1)
     plt.close()
@@ -2076,7 +2024,7 @@ class graphButtonMenuItem(BasicMenuItem):
     self.audioClass.enableGraph()
     #with threading.Lock(): # This should at least flush the changes... Right?
     #  self.isGraphThreadRunning = True    
-    #self.graphThread = threading.Thread(target=self.graphThreadRunner, args=(self.tArgs, self.audioClass), daemon=True)
+    #self.graphThread = threading.Thread(target=self.graphThreadRunner, args=(self.global_config, self.audioClass), daemon=True)
     #self.graphThread.start()
     # matplotlib.use("macOSX")
     
@@ -2101,8 +2049,8 @@ class graphButtonMenuItem(BasicMenuItem):
 
     #curr = self.audioClass.index # Get current position
     #exp_as_func = self.audioClass.getAudioFunc() # Update expression
-    #actionMsg = str([x for x in self.calcIterator(curr, curr+10000, self.tArgs.step, exp_as_func)])
-    #plt.plot([x for x in self.calcIterator(curr, curr+10000, self.tArgs.step, exp_as_func)])
+    #actionMsg = str([x for x in self.calcIterator(curr, curr+10000, self.global_config.step, exp_as_func)])
+    #plt.plot([x for x in self.calcIterator(curr, curr+10000, self.global_config.step, exp_as_func)])
     #plt.show()
     #plt.draw()
     return actionMsg
@@ -2147,9 +2095,9 @@ class TitleWindow:
 # Drive UIManager's type(ch) function with keyboard characters
 # to interact with it when needed.
 class UIManager:
-  def __init__(self, shape: Box, tArgs, audioClass, infoDisplay, exportDtype = int):
+  def __init__(self, shape: Box, global_config, audioClass, infoDisplay, exportDtype = int):
     self.infoDisplay = infoDisplay
-    self.tArgs = tArgs
+    self.global_config = global_config
     
     self.settingPads = []
     self.boxWidth = int(shape.colSize / 3)
@@ -2160,25 +2108,25 @@ class UIManager:
     # Create windows and store them in the self.settingPads list.
     
     # Graph Button
-    graphBtn = graphButtonMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart, colStart = shape.colStart), tArgs, audioClass)
+    graphBtn = graphButtonMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart, colStart = shape.colStart), global_config, audioClass)
 
     # Start range
-    startWin = startRangeMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart), "beg", tArgs)
-    startWin.updateValue(tArgs.start)
+    startWin = startRangeMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart), "beg", global_config)
+    startWin.updateValue(global_config.start)
     
     # Progress bar
-    progressWin = ProgressBar(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth), audioClass, tArgs, self.infoDisplay)
+    progressWin = ProgressBar(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth), audioClass, global_config, self.infoDisplay)
     
     # End range
-    endWin = endRangeMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth * 2), "end", tArgs)
-    endWin.updateValue(tArgs.end)
+    endWin = endRangeMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart+1, colStart = shape.colStart + self.boxWidth * 2), "end", global_config)
+    endWin.updateValue(global_config.end)
     
     # Step value
-    stepWin = stepMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart + 2, colStart = shape.colStart + self.boxWidth * 2), "step", tArgs)
-    stepWin.updateValue(tArgs.step)
+    stepWin = stepMenuItem(Box(rowSize = int(shape.rowSize/2), colSize = self.boxWidth, rowStart = shape.rowStart + 2, colStart = shape.colStart + self.boxWidth * 2), "step", global_config)
+    stepWin.updateValue(global_config.step)
     
     # This currently takes up the width of the screen. Change the value from colSize to resize it
-    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), tArgs, progressWin, self.infoDisplay, exportDtype)
+    saveWin = exportButton(Box(rowSize = int(shape.rowSize/2), colSize = int(shape.colSize*(2/3)-1), rowStart = shape.rowStart+2, colStart = shape.colStart), global_config, progressWin, self.infoDisplay, exportDtype)
 
     if curses.has_colors():
       curses.init_pair(2, curses.COLOR_RED, -1)
@@ -2217,12 +2165,12 @@ class UIManager:
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
   # TODO: This is a crime...
-  def refreshAll(self): # TODO: Wait... Don't I give each object a tArgs anyways??? This is... despicable...
+  def refreshAll(self): # TODO: Wait... Don't I give each object a global_config anyways??? This is... despicable...
     self.settingPads[0].updateValue(0)
-    self.settingPads[1].updateValue(self.tArgs.start)
-    self.settingPads[3].updateValue(self.tArgs.end)
+    self.settingPads[1].updateValue(self.global_config.start)
+    self.settingPads[3].updateValue(self.global_config.end)
     self.settingPads[4].updateValue("Export Audio")
-    self.settingPads[5].updateValue(self.tArgs.step)
+    self.settingPads[5].updateValue(self.global_config.step)
     for win in self.settingPads:
       win.refresh()
       win.hideCursor()
@@ -2255,7 +2203,7 @@ class UIManager:
       else: # Not editing? Interpret as shut down
         with self.lock:
           self.infoDisplay.updateInfo("ESC recieved. Shutting down...")
-          self.tArgs.shutdown = True
+          self.global_config.shutdown = True
 
     # Switch between menu items
     if self.editing == False and (ch == curses.KEY_LEFT or ch == curses.KEY_RIGHT):
@@ -2287,8 +2235,8 @@ class UIManager:
       self.focusedWindow.onHoverEnter()
       self.infoDisplay.updateInfo(actionMsg)
       self.refreshTitleMessage()
-      self.tArgs.SaveTimer.notify()
-      self.tArgs.updateAudio = True
+      self.global_config.SaveTimer.notify()
+      self.global_config.updateAudio = True
     
     # Function macro to begin edting
     def beginEdit():
@@ -2468,8 +2416,8 @@ class maybeCalcIterator(object):
 
 #Thread generating and playing audio
 class AudioPlayer:
-  def __init__(self, tArgs, info_update_fn = None):
-    self.tArgs = tArgs
+  def __init__(self, global_config, info_update_fn = None):
+    self.global_config = global_config
     self.info_update_fn = info_update_fn
     self.index = 0
     self.paused = False
@@ -2481,7 +2429,7 @@ class AudioPlayer:
     self.nextStart = None
 
   def getLock(self):
-    return self.tArgs.lock
+    return self.global_config.lock
     #return self.lock
   
 
@@ -2519,16 +2467,16 @@ class AudioPlayer:
   def graphOn(self):
     plt.ion()
     plt.ylim([-1,1])
-    #X = [x for x in self.calcIterator(self.tArgs.start, self.tArgs.end, self.tArgs.step), lambda x: x]
+    #X = [x for x in self.calcIterator(self.global_config.start, self.global_config.end, self.global_config.step), lambda x: x]
     #audioFunc = self.getAudioFunc()
     #if not audioFunc:
     #  audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
-    X = [x for x in maybeCalcIterator(self.tArgs.start, self.tArgs.start+abs(self.tArgs.step) * (self.tArgs.frameSize-1), abs(self.tArgs.step), lambda x: x)]
-    Y = [0.0] * self.tArgs.frameSize #[x for x in self.maybeCalcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * self.tArgs.frameSize, self.tArgs.step, audioFunc)]
+    X = [x for x in maybeCalcIterator(self.global_config.start, self.global_config.start+abs(self.global_config.step) * (self.global_config.frameSize-1), abs(self.global_config.step), lambda x: x)]
+    Y = [0.0] * self.global_config.frameSize #[x for x in self.maybeCalcIterator(self.global_config.start, self.global_config.start+self.global_config.step * self.global_config.frameSize, self.global_config.step, audioFunc)]
     fig, ax = plt.subplots()
     ax.set_ylim(bottom = -1, top = 1)
     lines = ax.plot(X, Y)[0]
-    self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.tArgs.start, self.tArgs.start+self.tArgs.step * 10000, self.tArgs.step, self.exp_as_func)])[0]
+    self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.global_config.start, self.global_config.start+self.global_config.step * 10000, self.global_config.step, self.exp_as_func)])[0]
 
   # TODO: Why doesn't it actually close?
   def graphOff(self):
@@ -2547,7 +2495,7 @@ class AudioPlayer:
   
 
   def play(self):
-    self.audioThread(self.tArgs,)
+    self.audioThread(self.global_config,)
   
   def isPausedOnException(self):
     return self.is_paused_on_error
@@ -2563,10 +2511,10 @@ class AudioPlayer:
 
   #def getAudioFunc(self):
   #  try: # Don't error-out on an empty text box
-  #    if(self.tArgs.expression):
-  #      exp_as_func = eval('lambda x: ' + self.tArgs.expression, self.tArgs.functionTable)
+  #    if(self.global_config.expression):
+  #      exp_as_func = eval('lambda x: ' + self.global_config.expression, self.global_config.functionTable)
   #      return exp_as_func
-  #    #exp_as_func = eval('lambda x: ' + tArgs.expression, tArgs.functionTable)
+  #    #exp_as_func = eval('lambda x: ' + global_config.expression, global_config.functionTable)
   #  except SyntaxError:
   #    #sys.stderr.write("Error creating generator function: Expression has not yet been set, or other SyntaxError\n")
   #    pass
@@ -2594,33 +2542,33 @@ class AudioPlayer:
   #      return 0
 
 
-  def audioThread(self, tArgs):
+  def audioThread(self, global_config):
     try:
       p = pyaudio.PyAudio()
       stream = p.open(format=pyaudio.paFloat32,
-                      channels = tArgs.channels,
-                      rate = tArgs.rate,
+                      channels = global_config.channels,
+                      rate = global_config.rate,
                       output = True,
-                      frames_per_buffer = tArgs.frameSize)
+                      frames_per_buffer = global_config.frameSize)
       
       
-      frameSize = tArgs.frameSize
+      frameSize = global_config.frameSize
       start, end, step, evaluator = (0,0,0, None)
-      with tArgs.lock:
-        start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+      with global_config.lock:
+        start, end, step, evaluator = (global_config.start, global_config.end, global_config.step, global_config.evaluator)
       graphtimer = time.time()
-      while tArgs.shutdown == False:
+      while global_config.shutdown == False:
 
         while self.paused == True:
           paused = self.paused # Basically relaxed read
           # Wait to become unpaused
           time.sleep(0.2)
-          if tArgs.shutdown == True:
+          if global_config.shutdown == True:
             self.setPaused(False)
 
         # Refresh data
-        with tArgs.lock:
-          start, end, step, evaluator = (tArgs.start, tArgs.end, tArgs.step, tArgs.evaluator)
+        with global_config.lock:
+          start, end, step, evaluator = (global_config.start, global_config.end, global_config.step, global_config.evaluator)
           if self.nextStart != None:
             if step < 0:
               end = self.nextStart
@@ -2629,14 +2577,14 @@ class AudioPlayer:
             self.nextStart = None
 
         iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = self.pauseOnException, repeatOnException = True)
-        for chunk in chunker(iter, tArgs.frameSize):
+        for chunk in chunker(iter, global_config.frameSize):
           stream.write( struct.pack('<%df' % len(chunk), *chunk) )
           self.updateGraphState() # Have this thread manage the graph
           cont = False
           self.index = iter.curr
           with self.getLock():
-            if tArgs.updateAudio or tArgs.shutdown or self.paused: # Time to read new data
-              tArgs.updateAudio = False
+            if global_config.updateAudio or global_config.shutdown or self.paused: # Time to read new data
+              global_config.updateAudio = False
               cont = True
               self.nextStart = iter.curr # Pick up where you left off this time
               break
@@ -2667,7 +2615,7 @@ class AudioPlayer:
     except (KeyboardInterrupt, SystemExit):
       pass
     finally:
-      tArgs.shutdown = True
+      global_config.shutdown = True
       stream.stop_stream()
       stream.close()
       p.terminate()
@@ -2681,57 +2629,267 @@ class AudioPlayer:
 
 # The runner class for CalcWave
 class CalcWave:
-  def __init__(self):
-    pass
+  # Constructor - basic setup based on given arguments
+  def __init__(self, argv):
+    global_config = Config()
+    self.global_config = global_config
+
+    # Parses command line arguments to the program
+    args = parse_args(argv)
+
+    # Fills the global_config object based on all the applicable information as passed as arguments
+    self.global_config.start = args.beg
+    self.global_config.end = args.end
+    #global_config.channels = args.channels # Note that right now, "channels" is not used.
+    self.global_config.channels = 1
+    self.global_config.rate = args.rate
+    self.global_config.frameSize = args.buffer
+    self.args = args
+
+    # Check basic argument requirements, syntax, and path validity
+    print("Running checks...  ", end = '', file = sys.stderr)
+    test_arg_audiofile_correct_syntax(self)
+
+    if args.file and not os.path.exists(args.file):
+      print('\nError: Project file "{args.file}" does not exist', file = sys.stderr)
+      sys.exit(1)
+    
+    # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
+    if args.export:
+      if os.path.exists(args.export):
+        if not self._confirm_input():
+          sys.exit(0)
+    print("Done")
+
+    # Runs further program setup, makes modifications to self.global_config based on arguments and self.args.
+    # This function may exit the program here.
+    self._setup(argv)
+  
+  def _setup(self, argv):
+
+    # For each audio file and name present in --audio_files, populate the AUDIO_ARRAY. Assumes that every argument is
+    # correctly formatted, every file exists, and that no name is duplicated.
+    if audio_file != []:
+      for file in audio_file:
+        self.loadAudioFile(file)
+      self.global_config.evaluator = Evaluator(dict['expr'], audio_array = self.global_config.AUDIO_ARRAY)
+    else:
+
+    if self.is_expr_default():
+      self.global_config.start = self.args.start
+      if self.is_loaded_audio_present():
+        self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_ARRAY)
+      else:
+        self.global_config.end = self.args.end
+
+    # If in cli mode, simply try to import the available program, write out an audio file, and exit.
+    if self.args.export:
+      if not self.global_config.evaluator:
+        print("Error: Incorrect _setup: global_config.evaluator is not set"
+        exit(1)
+      exportAudio(args.export, global_config, None, None, type = float if args.float32 else int)
+      sys.exit(0)
+  
+  # Thanks to https://stackoverflow.com/a/3042378/16386050
+  def self._confirm_input(self):
+    if self.args.yes == True:
+      return True
+    
+    yes = {'yes','y', 'ye', ''}
+    no = {'no','n'}
+    
+    choice = raw_input().lower()
+    if choice in yes:
+      return True
+    elif choice in no:
+      return False
+    else:
+      sys.stdout.write("Please respond with 'yes' or 'no'")
+
+  # An internal test that runs a check on the arguments of --audiofile.
+  # Prints an error message and ends the program if the arguments are malformed,
+  # any of the files do not exist, or any of the variable names are duplicated.
+  def test_arg_audiofile_correct_syntax(self):
+    seen_names = set()  # Track seen variable names to detect duplicates
+
+    for arg in self.args.audiofile:
+      try:
+        # Split using a regex that ignores escaped colons
+        path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
+      except ValueError:
+        print(f'Error: argument "{arg}" is malformed. Expected format is "path:name".', file=sys.stderr)
+        sys.exit(1)
+
+      # Check if the file exists
+      if not os.path.exists(path):
+        print(f'Error: argument "{arg}": File does not exist: {path}', file=sys.stderr)
+        sys.exit(1)
+
+      # Check for duplicate variable names
+      if name in seen_names:
+        print(f'Error: argument "{arg}": Duplicate variable name "{name}".', file=sys.stderr)
+        sys.exit(1)
+
+      # Add the name to the seen set
+      seen_names.add(name)
+
+      
+      
+      
 
 
-  def main(self, argv = None):
+  def parse_args(self, argv = None):
     if argv[0] == sys.argv[0]:
       argv.pop(0)
     parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
     
     parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
     parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
-                        # New Proposal: help = '-f <VAR_NAME>:<filepath> The audio file to load into the interpereter. Named by VAR_NAME, this will be available in the editor scope, and must be a valid Python variable name. Shape is (channels, audio_array). This data will be stored as a "read-only"** numpy array.')
+                        # New Proposal:
+                        #help = '-f <filepath>:<VAR_NAME> The audio file(s) to load into the interpereter. Named by VAR_NAME, these will be available in the editor scope as read-only numpy arrays by the shape "(channels, audio_array)". VAR_NAME must be a valid Python variable name. This argument may be repeated.')
+                        # Old configuration:
                         help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
     parser.add_argument('-x', '--expr', type = str, default = "0",
-                        help = "The expression, in terms of x. When using the command line, it may help to surround it in single quotes. If --gui is specified, default is 0")
+                        help = "A function in terms of x to preload into the editor (it may help to surround this in single quotes). Default is 0 in gui mode.")
     parser.add_argument("-b", "--beg", type = int, default = -100000,
                         help = "The lower range of x to start from.")
     parser.add_argument("-e", "--end", type = int, default = 100000,
                         help = "The upper range of x to end at.")
-    #parser.add_argument("-o", "--export", type = str, default = "", nargs = '?',
-    #                    help = "Export to specified file as wav. File extension is automatically added.")
+    parser.add_argument("-o", "--export", type = str, default = None, nargs = '?',
+                        help = "Export to specified file as wav. File extension is automatically added.")
+    parser.add_argument("-y", "--yes", type = bool, default = "store_false", nargs = '?',
+                        help = "Automatically confirms Y/n prompts")
     #parser.add_argument("--channels", type = int, default = 1,
     #                    help = "The number of audio channels to use")
     parser.add_argument("-d", "--float32", action="store_true", help = "Export audio as float32 wav (still clipped between -1 and 1)")
     parser.add_argument("--rate", type = int, default = 44100,
                         help = "The audio rate to use")
     parser.add_argument("--buffer", type = int, default = 1024,
-                        help = "The audio buffer frame size to use. This is the length of the chunk of floats, not the memory it will take.")
-    parser.add_argument("--cli", default = False, action = "store_true",
-                        help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching curses mode")
-
+                        help = "The audio buffer frame size to use. This is the length of the chunks of floats, not the memory it will use.")
+    #parser.add_argument("--cli", default = False, action = "store_true",
+    #                    help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching the curses UI")
 
     if argv is None:
       argv = sys.argv
     
-    # The class that is passed to other threads and holds
-    # information about how to play sound and act
-
     args = parser.parse_args(argv) #Parse arguments
+    return args
 
+
+  # Loads the CalcWave project from the file - returns new Config object
+  def load(self):
+    t = Config()
+    dict = None
+    with open(self.args.file, 'r') as file:
+      dict = json.load(file)
+    t.start = dict['start']
+    t.end = dict['end']
+    t.step = dict['step']
+    t.rate = dict['rate']
+    t.channels = dict['channels']
+    t.frameSize = dict['frameSize']
+    t.SaveTimer = self
+    self.global_config = t
+    self.global_config.evaluator = Evaluator(dict['expr'])
+    return self.global_config
+  
+  # Loads a new audio file and adds it to global_config.AUDIO_ARRAY.
+  def loadAudioFile(self, path: str):
+    try:
+      # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
+      import soundfile as sf
+    except ImportError as e:
+      print("Error importing pydub module, needed for loading audio. You may install this using \"python3 -m pip install soundfile\". Note: the ffmpeg library will be needed for this.")
+      raise e
+    #filename, file_extension = os.path.splitext(path)
+    #a = pydub.AudioSegment.from_file(path)
+    #arr = a.get_array_of_samples()
+
+    # Note: samplerate is not used for now... This could cause issues...
+    arr, samplerate = sf.read(path, always_2d = True)
+    channels = arr.shape[1]
+    audioarr = arr.reshape((-1, channels)).astype(float)
+    #print(arr.shape)
+    #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
+    #nparr = np.array(arr)
+    #print(audioarr.dtype, arr.dtype)
+    #print(np.mean(audioarr))
+    #time.sleep(2)
+    if not np.issubdtype(arr.dtype, np.floating):
+      audioarr /= np.iinfo(arr.dtype).max # Scale between -1 and 1 as float
+      #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
+      #time.sleep(2)
+      
+    self.global_config.AUDIO_ARRAY.append(audioarr)
+
+    #return audioarr
+
+  # Reading the class's current configuration, returns whether an expression other than the default has been set in the config.
+  # Returns True if no Evaluator has been configured in the global_config
+  def is_expr_default():
+    return self.global_config.evaluator is None or not self.global_config.evaluator.getText() == self.get_default_prog()
+    # or (os.path.isfile(self.args.file)
+  
+  # Reading the class's current configuration, returns whether audio is loaded in the AUDIO_ARRAY (using --audiofile)
+  def is_loaded_audio_present():
+    return not self.args.audiofile in ([], None)
+
+
+  # Based on the class's current configuration,
+  # Returns the default program, optionally configuring it for audio input defaults
+  # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
+  def get_default_prog(self, args) -> str:
+    return "main = " + args.expr
+
+  # Initializes an AudioPlayer (evaluator and stream player) object based on the global_config object currently configured in this class
+  def create_audio_player(self):
+    return AudioPlayer(self.global_config)
+    
+  # Creates a SaveTimer object using the class's current configuration, turns it on, and returns it.
+  # SaveTimer also manages the loading of files, as well as saving.
+  # This will also:
+  # * Populate global_config.AUDIO_ARRAY if audio files are to be loaded.
+  # * 
+  def create_save_timer(self):
+    saveTimer = SaveTimer(2, self.args.file, self.global_config) # Save every 2 seconds if changes are present
+    self.global_config.SaveTimer = saveTimer
+    if os.path.isfile(self.args.file): # If the calcwave project file specified is present,
+      # Load from file path if exists; else, leave to be created.
+    if args.audiofile:
+      for file in args.audiofile:
+        # Loads the audio file into the linked global store. This updates AUDIO_ARRAY in the global_config
+        saveTimer.loadAudioFile(file[0])
+    saveTimer.timerOn() # Start autosave timer
+    return saveTimer
+    
+
+  #def cli_export_audio(self):
+  
+
+  # Runs the program with the current configuration
+  def main(self):
+    self.main_old(argv)
+    #args = self.parse_args(argv)
+    #self.set_config_defaults(args)
+    
+    
+    
+  
+
+  def main_old(self, argv = None):
+    args = self.parse_args(argv)
+    
     expr_is_default = args.expr == "0"
 
-    tArgs = threadArgs()
-    tArgs.evaluator = Evaluator("main = " + args.expr)
+    global_config = Config()
+    global_config.evaluator = Evaluator("main = " + args.expr)
     #Set variables
-    tArgs.start = args.beg
-    tArgs.end = args.end
-    #tArgs.channels = args.channels # Note that right now, "channels" is not used.
-    tArgs.channels = 1
-    tArgs.rate = args.rate
-    tArgs.frameSize = args.buffer
+    global_config.start = args.beg
+    global_config.end = args.end
+    #global_config.channels = args.channels # Note that right now, "channels" is not used.
+    global_config.channels = 1
+    global_config.rate = args.rate
+    global_config.frameSize = args.buffer
       
     
     # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
@@ -2740,17 +2898,17 @@ class CalcWave:
       if args.expr == "":
         print("Error: --expr is required with --cli", file = sys.stderr)
         sys.exit(1)
-      exportAudio(args.file, tArgs, None, None, type = float if args.float32 else int) # CLI operation
+      exportAudio(args.file, global_config, None, None, type = float if args.float32 else int) # CLI operation
       sys.exit(0)
     else: # GUI mode
-      saveTimer = SaveTimer(2, args.file, tArgs) # Save every 2 seconds if changes are present
-      tArgs.SaveTimer = saveTimer
+      saveTimer = SaveTimer(2, args.file, global_config) # Save every 2 seconds if changes are present
+      global_config.SaveTimer = saveTimer
       if os.path.isfile(args.file): # If the calcwave project file specified is present
         # Load from file path if exists; else, leave to be created.
-        # Note that tArgs contains a (self) instance of SaveTimer upon calling load()
+        # Note that global_config contains a (self) instance of SaveTimer upon calling load()
         #if args.audiofile:
-        #  tArgs = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
-        #print(tArgs.evaluator)
+        #  global_config = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
+        #print(global_config.evaluator)
         expr_is_default = False
       #else:
       if args.audiofile:
@@ -2759,27 +2917,27 @@ class CalcWave:
           saveTimer.loadAudioFile(file[0])
       saveTimer.timerOn() # Start autosave timer
 
-      #print(tArgs.evaluator)
+      #print(global_config.evaluator)
       #time.sleep(2)
 
     # Update starting setup if defaults and audio files are specified
-    if not tArgs.AUDIO_ARRAY in ([],None):
-      #if tArgs.evaluator:
-      #  if tArgs.evaluator.getText() == "main = " + args.expr:
+    if not global_config.AUDIO_ARRAY in ([],None):
+      #if global_config.evaluator:
+      #  if global_config.evaluator.getText() == "main = " + args.expr:
       if expr_is_default:
-        tArgs.start = 0
-        tArgs.end = max(len(data)-1 for data in tArgs.AUDIO_ARRAY)
+        global_config.start = 0
+        global_config.end = max(len(data)-1 for data in global_config.AUDIO_ARRAY)
         if args.expr == "0":
           # Make a similar Evaluator, this time with the audio_array attached, and a default program
-          tArgs.evaluator = Evaluator("""
+          global_config.evaluator = Evaluator("""
   # Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
   audio_file = AUDIO_IN[0] # Read audio file data #0
   channels = audio_file[:] # An array of per-channel samples arrays
   num_channels = len(channels) # The number of channels
-  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = tArgs.AUDIO_ARRAY)
+  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = global_config.AUDIO_ARRAY)
         else:
           # Make a similar Evaluator, this time with the audio_array attached, but preserve the user-set text
-          tArgs.evaluator = Evaluator(tArgs.evaluator.getText(), audio_array = tArgs.AUDIO_ARRAY)
+          global_config.evaluator = Evaluator(global_config.evaluator.getText(), audio_array = global_config.AUDIO_ARRAY)
     sys.stderr.write("Starting GUI mode\n")
 
     window = None
@@ -2796,13 +2954,13 @@ class CalcWave:
       curses.use_default_colors()
 
     # Initialize AudioPlayer
-    audioClass = AudioPlayer(tArgs)
+    audioClass = AudioPlayer(global_config)
 
     window = None
     try:
       # rowSize, colSize, rowStart, colStart
       #Start the GUI input thread
-      window = WindowManager(tArgs, scr, tArgs.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
+      window = WindowManager(global_config, scr, global_config.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
       window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
       saveTimer.setTitleWidget(window.menu.title)
     except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
@@ -2828,7 +2986,7 @@ class CalcWave:
     saveTimer.save()
 
     # When that exits
-    tArgs.shutdown = True
+    global_config.shutdown = True
     
     if window:
       window.thread.join()
@@ -2836,7 +2994,7 @@ class CalcWave:
       
 
 def main(argv = None):
-  CalcWave().main(argv)
+  CalcWave(argv).main()
 
 if __name__ == "__main__":
   main()
