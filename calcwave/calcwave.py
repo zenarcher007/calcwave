@@ -1195,21 +1195,25 @@ class MemoryClassCompiler:
 
 
 # Accepts CalcWave text input
-# Parses and evaluates Python syntax
+# Parses and evaluates Python syntax (with any extra features)
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
   def __init__(self, text, symbolTable = vars(math), audio_map = {}):
     self.text = text
-    self.symbolTable = symbolTable
+    self.symbolTable = symbolTable.copy()
 
+    self.audio_map = audio_map
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
     self.symbolTable["main"] = 0
-    if audio_map != []:
-      for arr in audio_map.values():
-        arr.setflags(write = False)
-      self.symbolTable.update(audio_map)
+    self.symbolTable["load"] = self.load # For syntactical loading of audio files
+    #if audio_map != []:
+    #  for arr in audio_map.values():
+    #    arr.setflags(write = False)
+    #  self.symbolTable.update(audio_map)
+    self.audio_aliases = set() # A smaller set to hold aliases already detected via "in" for performance reasons
+
     self.symbolTable.update(mathextensions.getFunctionTable())
 
     self.memory_class = MemoryClassCompiler()
@@ -1217,6 +1221,51 @@ class Evaluator:
     self.symbolTable.update(self.memory_class.getFunctionTable())
 
     self.prog = compile(text, '<string>', 'exec', optimize=2)
+
+  ### A custom Evaluator function that loads and adds audio to the audio_map. This will be available globally in the syntax
+  def load(self, path, alias):
+    if not alias in self.audio_aliases:
+      self.audio_aliases.add(alias)
+      audioarr = None
+      if not alias in self.audio_map.keys():
+        if not os.path.exists(path):
+          raise FileNotFoundError('load "{alias}": path "{path}" does not exist.')
+        audioarr = self.loadAudioFile(path)
+        audioarr.setflags(write = False)
+        self.audio_map[alias] = audioarr
+      else:
+        audioarr = self.audio_map[alias]
+      self.symbolTable[alias] = audioarr
+
+  
+  def loadAudioFile(self, path: str):
+    try:
+      # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
+      import soundfile as sf
+    except ImportError as e:
+      print("Error importing pydub module needed for loading audio. You may install this using \"python3 -m pip install soundfile\". Note: the ffmpeg library will be needed for this.")
+      raise e
+    #filename, file_extension = os.path.splitext(path)
+    #a = pydub.AudioSegment.from_file(path)
+    #arr = a.get_array_of_samples()
+
+    # Note: samplerate is not used for now... This could cause issues...
+    arr, samplerate = sf.read(path, always_2d = True)
+    channels = arr.shape[1]
+    audioarr = arr.reshape(channels, -1).astype(float)
+    #print(arr.shape)
+    #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
+    #nparr = np.array(arr)
+    #print(audioarr.dtype, arr.dtype)
+    #print(np.mean(audioarr))
+    #time.sleep(2)
+    if not np.issubdtype(arr.dtype, np.floating):
+      audioarr /= np.iinfo(arr.dtype).max # Scale between -1 and 1 as float
+      #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
+      #time.sleep(2)
+
+    return audioarr
+      
 
   # Retrieves the current expression contents as a string
   def getText(self):
@@ -1785,10 +1834,10 @@ class endRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.global_config.AUDIO_MAP is not None and value >= len(self.global_config.AUDIO_MAP):
-        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.global_config.AUDIO_MAP))
-        self.updateValue(len(self.global_config.AUDIO_MAP))
-      elif value < self.global_config.start: # Don't allow crossing start / end ranges
+      #if self.global_config.AUDIO_MAP is not None and value >= len(self.global_config.AUDIO_MAP):
+      #  actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.global_config.AUDIO_MAP))
+      #  self.updateValue(len(self.global_config.AUDIO_MAP))
+      if value < self.global_config.start: # Don't allow crossing start / end ranges
         actionMsg = "End range cannot be less than start range!"
         self.updateValue(self.global_config.end)
       else:
@@ -2665,7 +2714,7 @@ class CalcWave:
     
     # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
     if args.export:
-      if os.path.exists(args.export + ".wav"):
+      if os.path.exists(args.export):
         if not self._confirm_input('\nFile "{args.export}" already exists. Would you like to overwrite it?'):
           sys.exit(0)
     #print("Done")
@@ -2694,7 +2743,7 @@ class CalcWave:
 
     # Update the Evaluator to reflect the current AUDIO_MAP
     if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_MAP
-      prog = self.global_config.evaluator.getText() if self.global_config.evaluator else get_default_prog()
+      prog = self.global_config.evaluator.getText() if self.global_config.evaluator else self.get_default_prog()
       self.global_config.evaluator = Evaluator(prog, audio_map = self.global_config.AUDIO_MAP)
     elif not self.global_config.evaluator:
       self.global_config.evaluator = Evaluator(self.get_default_prog())
@@ -2761,20 +2810,21 @@ class CalcWave:
       argv.pop(0)
     parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
     
-    parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
+    parser.add_argument('file', type = str, help = "Project file path (*.cw) to load, created if it does not already exist. This will be autosaved - copy the project file as desired for backups")
     parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
                         # New Proposal:
                         #help = '-f <filepath>:<VAR_NAME> The audio file(s) to load into the interpereter. Named by VAR_NAME, these will be available in the editor scope as read-only numpy arrays by the shape "(channels, audio_map)". VAR_NAME must be a valid Python variable name. This argument may be repeated.')
                         # Old configuration:
                         help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
-    parser.add_argument('-x', '--expr', type = str, default = "0",
-                        help = "A function in terms of x to preload into the editor (it may help to surround this in single quotes). Default is 0 in gui mode.")
+    # --expr is Deprecated
+    #parser.add_argument('-x', '--expr', type = str, default = "0",
+    #                    help = "A function in terms of x to preload into the editor (it may help to surround this in single quotes). Default is 0 in gui mode.")
     parser.add_argument("-b", "--beg", type = int, default = -100000,
                         help = "The lower range of x to start from.")
     parser.add_argument("-e", "--end", type = int, default = 100000,
                         help = "The upper range of x to end at.")
     parser.add_argument("-o", "--export", type = str, default = None, nargs = '?',
-                        help = "Export to specified file as wav. File extension is automatically added.")
+                        help = "Generate, and export to the specified file in WAVE format.")
     parser.add_argument("-y", "--yes", type = bool, default = "store_false", nargs = '?',
                         help = "Automatically confirms Y/n prompts")
     #parser.add_argument("--channels", type = int, default = 1,
@@ -2862,7 +2912,7 @@ class CalcWave:
   # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
   # TODO: Update the default example based on the audio files provided!!
   def get_default_prog(self) -> str:
-    return "main = " + self.args.expr
+    return "main = 0"
 
   # Initializes an AudioPlayer (evaluator and stream player) object based on the global_config object currently configured in this class
   def create_audio_player(self):

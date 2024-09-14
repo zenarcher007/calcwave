@@ -11,6 +11,9 @@ sqr = lambda t: 1.0 if math.sin(t) > 0 else -1.0
 def rand():
   return random.random() * 2 - 1
 
+def avg(x):
+  return sum(x) / len(x)
+
 class Integral:
   # __init__ must take no arguments
   def __init__(self):
@@ -274,4 +277,5 @@ def getFunctionTable():
   return {"tri": tri,
           "saw": saw,
           "sqr": sqr,
-          "rand": rand}
+          "rand": rand,
+          "avg": avg}
