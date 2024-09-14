@@ -36,6 +36,7 @@ from calcwave import mathextensions
 import json
 import itertools
 import time
+import numpy as np
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -50,7 +51,6 @@ useVirtualCursor = False
 if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))): 
   # Don't need pyaudio if just exporting audio as a file - only because this is a bit hard to install
   import pyaudio
-  import numpy as np
   #import matplotlib.pylab as plt
   #import matplotlib
   #from matplotlib import pyplot as plt
@@ -1141,7 +1141,7 @@ class Config:
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
     self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
-    self.AUDIO_ARRAY = []
+    self.AUDIO_MAP = {}
 
     self.lock = threading.Lock()
     global global_display_lock 
@@ -1199,17 +1199,17 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, symbolTable = vars(math), audio_array = []):
+  def __init__(self, text, symbolTable = vars(math), audio_map = {}):
     self.text = text
     self.symbolTable = symbolTable
 
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
     self.symbolTable["main"] = 0
-    if audio_array != []:
-      for arr in audio_array:
+    if audio_map != []:
+      for arr in audio_map.values():
         arr.setflags(write = False)
-      self.symbolTable['AUDIO_IN'] = audio_array
+      self.symbolTable.update(audio_map)
     self.symbolTable.update(mathextensions.getFunctionTable())
 
     self.memory_class = MemoryClassCompiler()
@@ -1246,10 +1246,8 @@ class WindowManager:
     self.global_config = global_config
     self.scr = scr
     self.oldStdout = None
-    
-    self.scr.keypad(True)
-    self.scr.nodelay(True)
-    curses.noecho()
+
+    self.initCursesSettings()
   
     rows, cols = self.scr.getmaxyx()
     #Initialize text editor
@@ -1264,7 +1262,12 @@ class WindowManager:
     self.thread = threading.Thread(target=self.windowThread, args=(global_config, scr, self.menu, audioClass), daemon=True)
     self.thread.start()
     self.editor.setText(initialExpr)
-    
+  
+  def initCursesSettings(self):
+    self.scr.keypad(True)
+    self.scr.nodelay(True)
+    curses.noecho()
+
   def getInfoDisplay(self):
     return self.infoDisplay
 
@@ -1312,7 +1315,7 @@ class WindowManager:
           # Display cursor position
           text = self.editor.getText()
           try:
-            evaluator = Evaluator(text, audio_array = global_config.AUDIO_ARRAY) # Compile on-screen code
+            evaluator = Evaluator(text, audio_map = global_config.AUDIO_MAP) # Compile on-screen code
             with global_config.lock:
               global_config.evaluator = evaluator # Install newly compiled code
               self.global_config.SaveTimer.notify()
@@ -1349,7 +1352,6 @@ class WindowManager:
     curses.echo()
     curses.nocbreak()
     scr.keypad(False)
-    curses.endwin()
 
 
 
@@ -1590,11 +1592,18 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
       timenow = time.time()
       if timenow > oldtime+0.25:
         oldtime = timenow
-        infoPad.updateInfo("Writing (" + str(int(abs(i-progressStart)/(abs(end-start))*100)) + "%)...")
+        progtext = "Writing (" + str(int(abs(i-progressStart)/(abs(end-start))*100)) + "%)..."
+        if infoPad:
+          infoPad.updateInfo(progtext)
+        else:
+          print(progtext, file=sys.stderr)
       i = i + len(chunk)
       j = j + 1
+  progtext = "Exported as " + fullPath
   if infoPad:
     infoPad.updateInfo("Exported as " + fullPath)
+  else:
+    print(progtext, file=sys.stderr)
 
 
 
@@ -1734,7 +1743,7 @@ class startRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.global_config.AUDIO_ARRAY is not None and value < 0:
+      if self.global_config.AUDIO_MAP is not None and value < 0:
         actionMsg = "Start range cannot be less than starting bound of AUDIO_IN. Value updated to 0"
         self.updateValue(0)
       elif value > self.global_config.end: # Don't allow crossing start / end ranges
@@ -1776,9 +1785,9 @@ class endRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.global_config.AUDIO_ARRAY is not None and value >= len(self.global_config.AUDIO_ARRAY):
-        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.global_config.AUDIO_ARRAY))
-        self.updateValue(len(self.global_config.AUDIO_ARRAY))
+      if self.global_config.AUDIO_MAP is not None and value >= len(self.global_config.AUDIO_MAP):
+        actionMsg = "End range cannot be greater than length of AUDIO_IN. Value updated to maximum length, " + str(len(self.global_config.AUDIO_MAP))
+        self.updateValue(len(self.global_config.AUDIO_MAP))
       elif value < self.global_config.start: # Don't allow crossing start / end ranges
         actionMsg = "End range cannot be less than start range!"
         self.updateValue(self.global_config.end)
@@ -2635,7 +2644,7 @@ class CalcWave:
     self.global_config = global_config
 
     # Parses command line arguments to the program
-    args = parse_args(argv)
+    args = self.parse_args(argv)
 
     # Fills the global_config object based on all the applicable information as passed as arguments
     self.global_config.start = args.beg
@@ -2647,20 +2656,19 @@ class CalcWave:
     self.args = args
 
     # Check basic argument requirements, syntax, and path validity
-    print("Running checks...  ", end = '', file = sys.stderr)
-    test_arg_audiofile_correct_syntax(self)
+    #print("Running checks...  ", end = '', file = sys.stderr)
+    self.test_arg_audiofile_correct_syntax()
 
     self.priorProjectExists = os.path.exists(args.file)
-    if args.file and not projectExists:
-      print('\nError: Project file "{args.file}" does not exist', file = sys.stderr)
-      sys.exit(1)
+    if args.file and not self.priorProjectExists:
+      print('\nCreating new project file "{args.file}"', file = sys.stderr)
     
     # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
     if args.export:
       if os.path.exists(args.export + ".wav"):
         if not self._confirm_input('\nFile "{args.export}" already exists. Would you like to overwrite it?'):
           sys.exit(0)
-    print("Done")
+    #print("Done")
 
     if self.priorProjectExists:
       self.loadProject(self.args.file) # Populates or updates config with additional project data
@@ -2671,31 +2679,34 @@ class CalcWave:
   
   def _setup(self, argv):
 
-    # For each audio file and name present in --audio_files, populate the AUDIO_ARRAY. Assumes that every argument is
+    # For each audio file and name present in --audio_files, populate the AUDIO_MAP. Assumes that every argument is
     # correctly formatted and every file exists
-    for arg in self.args.audiofile:
-      path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
-      self.loadAudioFile(path, name)
+    if self.args.audiofile is not None:
+      for arg in self.args.audiofile:
+        arg = arg[0]
+        path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
+        path = os.path.expanduser(path)
+        self.loadAudioFile(path, name)
 
     # Update the default end based on the max length of all audio files loaded
-    if not self.priorProjectExists and self.is_loaded_audio_present()
-      self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_ARRAY)
+    if (not self.priorProjectExists) and self.is_loaded_audio_present():
+      self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_MAP)
 
-    # Update the Evaluator to reflect the current AUDIO_ARRAY
-    if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_ARRAY
+    # Update the Evaluator to reflect the current AUDIO_MAP
+    if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_MAP
       prog = self.global_config.evaluator.getText() if self.global_config.evaluator else get_default_prog()
-      self.global_config.evaluator = Evaluator(prog, audio_array = self.global_config.AUDIO_ARRAY)
+      self.global_config.evaluator = Evaluator(prog, audio_map = self.global_config.AUDIO_MAP)
     elif not self.global_config.evaluator:
-      self.global_config.evaluator = Evaluator(get_default_prog())
+      self.global_config.evaluator = Evaluator(self.get_default_prog())
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
   
   # Thanks to https://stackoverflow.com/a/3042378/16386050
-  def self._confirm_input(self, prompt):
+  def _confirm_input(self, prompt):
     if self.args.yes == True:
       return True
     
-     sys.stderr.write(prompt + "\n> ")
+    sys.stderr.write(prompt + "\n> ")
 
     yes = {'yes','y', 'ye', ''}
     no = {'no','n'}
@@ -2713,13 +2724,17 @@ class CalcWave:
   # Prints an error message and ends the program if the arguments are malformed,
   # any of the files do not exist, or any of the variable names are duplicated.
   def test_arg_audiofile_correct_syntax(self):
+    if self.args.audiofile is None:
+      return
     seen_names = set()  # Track seen variable names to detect duplicates
 
     for arg in self.args.audiofile:
+      arg = arg[0] # argparse makes it a double-nested list
       try:
         # Split using a regex that ignores escaped colons
-        path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
-      except ValueError:
+        path, name = re.split(r'(?<!\\):', arg)
+        path = os.path.expanduser(path)
+      except ValueError as e:
         print(f'Error: argument "{arg}" is malformed. Expected format is "path:name".', file=sys.stderr)
         sys.exit(1)
 
@@ -2749,7 +2764,7 @@ class CalcWave:
     parser.add_argument('file', type = str, help = "File path (*.cw) to load, or create if it does not already exist; will be autosaved - backups are always recommended")
     parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
                         # New Proposal:
-                        #help = '-f <filepath>:<VAR_NAME> The audio file(s) to load into the interpereter. Named by VAR_NAME, these will be available in the editor scope as read-only numpy arrays by the shape "(channels, audio_array)". VAR_NAME must be a valid Python variable name. This argument may be repeated.')
+                        #help = '-f <filepath>:<VAR_NAME> The audio file(s) to load into the interpereter. Named by VAR_NAME, these will be available in the editor scope as read-only numpy arrays by the shape "(channels, audio_map)". VAR_NAME must be a valid Python variable name. This argument may be repeated.')
                         # Old configuration:
                         help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
     parser.add_argument('-x', '--expr', type = str, default = "0",
@@ -2780,27 +2795,27 @@ class CalcWave:
 
 
   # Loads the CalcWave project from the file, updating self.global_config.
-  def loadProject(self):
+  def loadProject(self, file):
     #t = Config()
     dict = None
-    with open(self.args.file, 'r') as file:
-      dict = json.load(file)
-    global_config.start = dict['start']
-    global_config.end = dict['end']
-    global_config.step = dict['step']
-    global_config.rate = dict['rate']
-    global_config.channels = dict['channels']
-    global_config.frameSize = dict['frameSize']
-    global_config.SaveTimer = self
+    with open(self.args.file, 'r') as f:
+      dict = json.load(f)
+    self.global_config.start = dict['start']
+    self.global_config.end = dict['end']
+    self.global_config.step = dict['step']
+    self.global_config.rate = dict['rate']
+    self.global_config.channels = dict['channels']
+    self.global_config.frameSize = dict['frameSize']
+    self.global_config.SaveTimer = self
     
     if self.is_loaded_audio_present():
-      self.global_config.evaluator = Evaluator(dict['expr'], audio_array = self.global_config.AUDIO_ARRAY)
+      self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP)
     else:
       self.global_config.evaluator = Evaluator(dict['expr'])
     return self.global_config
   
-  # Loads a single new audio file and adds it to global_config.AUDIO_ARRAY. Does not update global_config.evaluator args: (..., audiofile=...).
-  ### TODO: Use an audio map instead of an array, modify the Evaluator to support this
+  # Loads a single new audio file and adds it to global_config.AUDIO_MAP. Does not update global_config.evaluator with args: (..., audiofile=...).
+  # Must update global_config.AUDIO_MAP with numpy arrays in the shape [channels][samples]
   def loadAudioFile(self, path: str, name: str):
     try:
       # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
@@ -2815,7 +2830,7 @@ class CalcWave:
     # Note: samplerate is not used for now... This could cause issues...
     arr, samplerate = sf.read(path, always_2d = True)
     channels = arr.shape[1]
-    audioarr = arr.reshape((-1, channels)).astype(float)
+    audioarr = arr.reshape(channels, -1).astype(float)
     #print(arr.shape)
     #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
     #nparr = np.array(arr)
@@ -2827,27 +2842,27 @@ class CalcWave:
       #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
       #time.sleep(2)
       
-    self.global_config.AUDIO_ARRAY.append(audioarr)
+    self.global_config.AUDIO_MAP[name] = audioarr #.append(audioarr)
 
     #return audioarr
 
   # Reading the class's current configuration, returns whether an expression other than the default has been set in the config.
   # Returns True if no Evaluator has been configured in the global_config
-  def is_expr_default():
+  def is_expr_default(self):
     return self.global_config.evaluator is None or not self.global_config.evaluator.getText() == self.get_default_prog()
     # or (os.path.isfile(self.args.file)
   
-  # Reading the class's current configuration, returns whether audio is loaded in the AUDIO_ARRAY (using --audiofile)
-  def is_loaded_audio_present():
-    return not self.global_config in ([], None)
+  # Reading the class's current configuration, returns whether audio is loaded in the AUDIO_MAP (using --audiofile)
+  def is_loaded_audio_present(self):
+    return not self.global_config.AUDIO_MAP in ({}, [], None) # Zilch, zero, nothing
 
 
   # Based on the class's current configuration,
   # Returns the default program, optionally configuring it for audio input defaults
   # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
   # TODO: Update the default example based on the audio files provided!!
-  def get_default_prog(self, args) -> str:
-    return "main = " + args.expr
+  def get_default_prog(self) -> str:
+    return "main = " + self.args.expr
 
   # Initializes an AudioPlayer (evaluator and stream player) object based on the global_config object currently configured in this class
   def create_audio_player(self):
@@ -2856,23 +2871,35 @@ class CalcWave:
   # Creates a SaveTimer object using the class's current configuration, turns it on, and returns it.
   # SaveTimer also manages the loading of files, as well as saving.
   # This will also:
-  # * Populate global_config.AUDIO_ARRAY if audio files are to be loaded.
+  # * Populate global_config.AUDIO_MAP if audio files are to be loaded.
   # * 
   def create_save_timer(self):
     saveTimer = SaveTimer(2, self.args.file, self.global_config) # Save every 2 seconds if changes are present
-    self.global_config.SaveTimer = saveTimer
-    if os.path.isfile(self.args.file): # If the calcwave project file specified is present,
-      # Load from file path if exists; else, leave to be created.
-    if args.audiofile:
-      for file in args.audiofile:
-        # Loads the audio file into the linked global store. This updates AUDIO_ARRAY in the global_config
-        saveTimer.loadAudioFile(file[0])
+    self.global_config.SaveTimer = saveTimer # this exists in the config so it can be notified of changes
     saveTimer.timerOn() # Start autosave timer
     return saveTimer
     
 
   #def cli_export_audio(self):
   
+  # Configures curses. Returns the curses screen object
+  def init_curses(self):
+    scr = curses.initscr()
+    curses.curs_set(0) # Disable the actual cursor
+    rows, cols = scr.getmaxyx()
+      
+    if curses.has_colors():
+      curses.start_color()
+      curses.use_default_colors()
+    return scr
+  
+  def teardown_curses(self, scr):
+    curses.curs_set(1) # Re-enable the actual cursor
+    curses.echo()
+    curses.nocbreak()
+    scr.keypad(False)
+    curses.endwin()
+
 
   # Runs the program with the current configuration
   def main(self):
@@ -2883,14 +2910,47 @@ class CalcWave:
     # If in cli mode, simply try to import the available program, write out an audio file, and exit.
     if self.args.export:
       if not self.global_config.evaluator:
-        print("Error: Incorrect _setup: global_config.evaluator is not set"
+        print("Error: Incorrect _setup: global_config.evaluator is not set")
         exit(1)
-      exportAudio(args.export, global_config, None, None, type = float if args.float32 else int)
+      exportAudio(self.args.export, self.global_config, None, None, dtype = float if self.args.float32 else int)
       sys.exit(0)
-  
-  ### TODO: UI SETUP...
-
     
+    saveTimer = self.create_save_timer()
+    audioPlayer = self.create_audio_player()
+
+    window = None
+    scr = self.init_curses()
+    try:
+      #Start the GUI input thread
+      window = WindowManager(self.global_config, scr, self.global_config.evaluator.getText(), audioPlayer, exportDtype = float if self.args.float32 else int)
+      window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
+      saveTimer.setTitleWidget(window.menu.title)
+      audioPlayer.set_info_update_fn(window.getInfoDisplay().updateInfo)
+      audioPlayer.play() # The program hangs on this call until it is ended.
+    except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
+      if window != None:
+        window.setRedirectOutput(False)
+        window.stopCursesSettings(scr)
+      self.teardown_curses(scr)
+      
+      print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
+      raise e
+    finally:
+      saveTimer.setTitleWidget(None)
+      saveTimer.timerOff()
+      saveTimer.save() # Save your current program
+
+      if window != None:
+        window.setRedirectOutput(False)
+        window.stopCursesSettings(scr)
+      self.teardown_curses(scr)
+
+      self.global_config.shutdown = True
+      if window:
+        window.thread.join()
+
+      
+
     
     
   
@@ -2940,23 +3000,23 @@ class CalcWave:
       #time.sleep(2)
 
     # Update starting setup if defaults and audio files are specified
-    if not global_config.AUDIO_ARRAY in ([],None):
+    if not global_config.AUDIO_MAP in ([],None):
       #if global_config.evaluator:
       #  if global_config.evaluator.getText() == "main = " + args.expr:
       if expr_is_default:
         global_config.start = 0
-        global_config.end = max(len(data)-1 for data in global_config.AUDIO_ARRAY)
+        global_config.end = max(len(data)-1 for data in global_config.AUDIO_MAP)
         if args.expr == "0":
-          # Make a similar Evaluator, this time with the audio_array attached, and a default program
+          # Make a similar Evaluator, this time with the audio_map attached, and a default program
           global_config.evaluator = Evaluator("""
   # Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
   audio_file = AUDIO_IN[0] # Read audio file data #0
   channels = audio_file[:] # An array of per-channel samples arrays
   num_channels = len(channels) # The number of channels
-  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_array = global_config.AUDIO_ARRAY)
+  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_map = global_config.AUDIO_MAP)
         else:
-          # Make a similar Evaluator, this time with the audio_array attached, but preserve the user-set text
-          global_config.evaluator = Evaluator(global_config.evaluator.getText(), audio_array = global_config.AUDIO_ARRAY)
+          # Make a similar Evaluator, this time with the audio_map attached, but preserve the user-set text
+          global_config.evaluator = Evaluator(global_config.evaluator.getText(), audio_map = global_config.AUDIO_MAP)
     sys.stderr.write("Starting GUI mode\n")
 
     window = None
