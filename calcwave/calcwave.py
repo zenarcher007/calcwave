@@ -2650,16 +2650,20 @@ class CalcWave:
     print("Running checks...  ", end = '', file = sys.stderr)
     test_arg_audiofile_correct_syntax(self)
 
-    if args.file and not os.path.exists(args.file):
+    self.priorProjectExists = os.path.exists(args.file)
+    if args.file and not projectExists:
       print('\nError: Project file "{args.file}" does not exist', file = sys.stderr)
       sys.exit(1)
     
     # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
     if args.export:
-      if os.path.exists(args.export):
-        if not self._confirm_input():
+      if os.path.exists(args.export + ".wav"):
+        if not self._confirm_input('\nFile "{args.export}" already exists. Would you like to overwrite it?'):
           sys.exit(0)
     print("Done")
+
+    if self.priorProjectExists:
+      self.loadProject(self.args.file) # Populates or updates config with additional project data
 
     # Runs further program setup, makes modifications to self.global_config based on arguments and self.args.
     # This function may exit the program here.
@@ -2668,43 +2672,42 @@ class CalcWave:
   def _setup(self, argv):
 
     # For each audio file and name present in --audio_files, populate the AUDIO_ARRAY. Assumes that every argument is
-    # correctly formatted, every file exists, and that no name is duplicated.
-    if audio_file != []:
-      for file in audio_file:
-        self.loadAudioFile(file)
-      self.global_config.evaluator = Evaluator(dict['expr'], audio_array = self.global_config.AUDIO_ARRAY)
-    else:
+    # correctly formatted and every file exists
+    for arg in self.args.audiofile:
+      path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
+      self.loadAudioFile(path, name)
 
-    if self.is_expr_default():
-      self.global_config.start = self.args.start
-      if self.is_loaded_audio_present():
-        self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_ARRAY)
-      else:
-        self.global_config.end = self.args.end
+    # Update the default end based on the max length of all audio files loaded
+    if not self.priorProjectExists and self.is_loaded_audio_present()
+      self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_ARRAY)
 
-    # If in cli mode, simply try to import the available program, write out an audio file, and exit.
-    if self.args.export:
-      if not self.global_config.evaluator:
-        print("Error: Incorrect _setup: global_config.evaluator is not set"
-        exit(1)
-      exportAudio(args.export, global_config, None, None, type = float if args.float32 else int)
-      sys.exit(0)
+    # Update the Evaluator to reflect the current AUDIO_ARRAY
+    if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_ARRAY
+      prog = self.global_config.evaluator.getText() if self.global_config.evaluator else get_default_prog()
+      self.global_config.evaluator = Evaluator(prog, audio_array = self.global_config.AUDIO_ARRAY)
+    elif not self.global_config.evaluator:
+      self.global_config.evaluator = Evaluator(get_default_prog())
+    ### There is guaranteed to be a self.global_config.evaluator past this point ###
+
   
   # Thanks to https://stackoverflow.com/a/3042378/16386050
-  def self._confirm_input(self):
+  def self._confirm_input(self, prompt):
     if self.args.yes == True:
       return True
     
+     sys.stderr.write(prompt + "\n> ")
+
     yes = {'yes','y', 'ye', ''}
     no = {'no','n'}
     
     choice = raw_input().lower()
-    if choice in yes:
-      return True
-    elif choice in no:
-      return False
-    else:
-      sys.stdout.write("Please respond with 'yes' or 'no'")
+    while True:
+      if choice in yes:
+        return True
+      elif choice in no:
+        return False
+      else:
+        sys.stderr.write("Please respond with 'yes' or 'no'")
 
   # An internal test that runs a check on the arguments of --audiofile.
   # Prints an error message and ends the program if the arguments are malformed,
@@ -2776,25 +2779,29 @@ class CalcWave:
     return args
 
 
-  # Loads the CalcWave project from the file - returns new Config object
-  def load(self):
-    t = Config()
+  # Loads the CalcWave project from the file, updating self.global_config.
+  def loadProject(self):
+    #t = Config()
     dict = None
     with open(self.args.file, 'r') as file:
       dict = json.load(file)
-    t.start = dict['start']
-    t.end = dict['end']
-    t.step = dict['step']
-    t.rate = dict['rate']
-    t.channels = dict['channels']
-    t.frameSize = dict['frameSize']
-    t.SaveTimer = self
-    self.global_config = t
-    self.global_config.evaluator = Evaluator(dict['expr'])
+    global_config.start = dict['start']
+    global_config.end = dict['end']
+    global_config.step = dict['step']
+    global_config.rate = dict['rate']
+    global_config.channels = dict['channels']
+    global_config.frameSize = dict['frameSize']
+    global_config.SaveTimer = self
+    
+    if self.is_loaded_audio_present():
+      self.global_config.evaluator = Evaluator(dict['expr'], audio_array = self.global_config.AUDIO_ARRAY)
+    else:
+      self.global_config.evaluator = Evaluator(dict['expr'])
     return self.global_config
   
-  # Loads a new audio file and adds it to global_config.AUDIO_ARRAY.
-  def loadAudioFile(self, path: str):
+  # Loads a single new audio file and adds it to global_config.AUDIO_ARRAY. Does not update global_config.evaluator args: (..., audiofile=...).
+  ### TODO: Use an audio map instead of an array, modify the Evaluator to support this
+  def loadAudioFile(self, path: str, name: str):
     try:
       # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
       import soundfile as sf
@@ -2832,12 +2839,13 @@ class CalcWave:
   
   # Reading the class's current configuration, returns whether audio is loaded in the AUDIO_ARRAY (using --audiofile)
   def is_loaded_audio_present():
-    return not self.args.audiofile in ([], None)
+    return not self.global_config in ([], None)
 
 
   # Based on the class's current configuration,
   # Returns the default program, optionally configuring it for audio input defaults
   # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
+  # TODO: Update the default example based on the audio files provided!!
   def get_default_prog(self, args) -> str:
     return "main = " + args.expr
 
@@ -2868,9 +2876,20 @@ class CalcWave:
 
   # Runs the program with the current configuration
   def main(self):
-    self.main_old(argv)
+    #self.main_old(argv)
     #args = self.parse_args(argv)
     #self.set_config_defaults(args)
+
+    # If in cli mode, simply try to import the available program, write out an audio file, and exit.
+    if self.args.export:
+      if not self.global_config.evaluator:
+        print("Error: Incorrect _setup: global_config.evaluator is not set"
+        exit(1)
+      exportAudio(args.export, global_config, None, None, type = float if args.float32 else int)
+      sys.exit(0)
+  
+  ### TODO: UI SETUP...
+
     
     
     
