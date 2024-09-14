@@ -97,7 +97,7 @@ if not sys.argv.count('--cli'):
 #self.evaluator = Evaluator("main=0")
 #self.lock = threading.Lock()
 
-# Checks every "delay" seconds, and saves to a file if flag has been set (it's not perfect)
+# Checks every "delay" seconds, and saves to a file if flag has been set
 class SaveTimer:
   def __init__(self, delay, filepath, Config):
     self.delay = delay
@@ -1199,14 +1199,14 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, symbolTable = vars(math), audio_map = {}):
+  def __init__(self, text, symbolTable = vars(math), channels = 1, audio_map = {}):
     self.text = text
     self.symbolTable = symbolTable.copy()
 
     self.audio_map = audio_map
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
-    self.symbolTable["main"] = 0
+    self.symbolTable["main"] = np.zeros(channels, dtype=np.float32)
     self.symbolTable["load"] = self.load # For syntactical loading of audio files
     #if audio_map != []:
     #  for arr in audio_map.values():
@@ -1283,9 +1283,10 @@ class Evaluator:
 
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
+    #self.symbolTable["main"] = np.zeros(2, dtype=np.float32)
     self.symbolTable['x'] = x # Add x to the internal symbol table
     exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
-    self.memory_class.reset()
+    self.memory_class.reset() # This resets the count of function calls for memistic functions to 0 (as each's data is mapped to its call number)
     return self.symbolTable["main"] # Return result
 
 
@@ -1364,7 +1365,7 @@ class WindowManager:
           # Display cursor position
           text = self.editor.getText()
           try:
-            evaluator = Evaluator(text, audio_map = global_config.AUDIO_MAP) # Compile on-screen code
+            evaluator = Evaluator(text, audio_map = global_config.AUDIO_MAP, channels = global_config.channels) # Compile on-screen code
             with global_config.lock:
               global_config.evaluator = evaluator # Install newly compiled code
               self.global_config.SaveTimer.notify()
@@ -1594,7 +1595,45 @@ def chunker(generator, n):
       break
     yield chunk
 
-def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
+def npchunker(generator, n, arrsize, dtype = None):
+  while True:
+    # Note that audio length will be clipped to multiples of arrsize
+    chunk = None
+    try:
+      chunk = np.fromiter(generator, count = n, dtype = (dtype, arrsize)) # Requires numpy version >=1.23
+    except ValueError:
+      break
+    yield chunk
+
+def npflatchunker(generator, n, arrsize, dtype = None):
+  #chunk = np.zeros((n, arrsize), dtype = dtype)
+  chunk = np.zeros(n*arrsize, dtype = dtype)
+  while True:
+    # Note that audio length will be clipped to multiples of arrsize
+    
+    i=0
+    for arr in itertools.islice(generator, n):
+      chunk[i:i+len(arr)] = arr[:]
+      i = i + len(arr)
+    if i == 0:
+      break
+    
+    #chunk = None
+    #try:
+    #  chunk = np.fromiter(generator, count = n, dtype = (dtype, arrsize)) # Requires numpy version >=1.23
+    #except ValueError:
+    #  break
+
+    # This is probably more efficient than you think - a calculation is made anyways every time the generator is called
+    #i=0
+    #for arr in itertools.islice(generator, n):
+    #  chunk[i] = arr
+    #  i = i + 1
+    #if i is 0:
+    #  break
+    yield chunk
+
+def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = float):
   def exHandler(e):
     print(f"Exception at x={str(i)}: {type(e).__name__ }: {str(e)}") # Use print system
 
@@ -1625,19 +1664,19 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
 
   with open(fullPath, 'wb') as file:
     totalsize = int((end - start) / step)
-    file.write(get_wav_header(totalsize, global_config.rate, dtype))
+    file.write(get_wav_header(totalsize, global_config.rate, dtype, global_config.channels))
     
     j = 0
     # Write wave file
     oldtime = time.time()
-    for chunk in chunker(iter, global_config.frameSize):
+    for chunk in npchunker(iter, global_config.frameSize, global_config.channels, dtype=np.float32):
+      chunkold = chunk
+      chunk = np.ravel(chunk)
+      assert np.may_share_memory(chunkold, chunk) # Ensures that the ravel did not make a deep copy of chunk for performance reasons
       if dtype == float:
         file.write(struct.pack('<%df' % len(chunk), *chunk))
       elif dtype == int:
-        #for o in chunk:
-        #  print(o, file=sys.stderr)
-        multiplyGen = (int(c*32767) for c in chunk)
-        file.write(struct.pack('<%dh' % len(chunk), *multiplyGen))
+        file.write(struct.pack('<%dh' % len(chunk), *(int(c*32767) for c in chunk) ) )
       timenow = time.time()
       if timenow > oldtime+0.25:
         oldtime = timenow
@@ -1646,7 +1685,7 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
           infoPad.updateInfo(progtext)
         else:
           print(progtext, file=sys.stderr)
-      i = i + len(chunk)
+      i = i + int(len(chunk)/global_config.channels)
       j = j + 1
   progtext = "Exported as " + fullPath
   if infoPad:
@@ -1657,7 +1696,7 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = int):
 
 
 # Adapted from https://stackoverflow.com/a/15650213
-def get_wav_header(totalsize, sample_rate, dtype):
+def get_wav_header(totalsize, sample_rate, dtype, channels):
   byte_count = (totalsize) * (4 if dtype == float else 2) # 32-bit floats
   # write the header
   wav_file = struct.pack('<ccccIccccccccIHHIIHHccccI',
@@ -1666,7 +1705,7 @@ def get_wav_header(totalsize, sample_rate, dtype):
     b'W', b'A', b'V', b'E', b'f', b'm', b't', b' ',
     16,  # size of 'fmt ' header
     3 if dtype == float else 1,  # format 3 = floating-point PCM
-    1,  # channels (global_config.channels is not yet supported)
+    channels,  # channels
     sample_rate,  # samples / second
     sample_rate * (4 if dtype == float else 2),  # bytes / second
     4 if dtype == float else 2,  # block alignment
@@ -2436,6 +2475,7 @@ class InfoDisplay:
   # A simple iterator that calls func from start to end over step.
   # Sort of like Python range(), but can work with any number, including floats
   # Returns 0 if there was an exception evaluating the function (hence "maybe")
+  # Modified to work with numpy arrays
 class maybeCalcIterator(object):
   def __init__(self, start, end, step, func, minVal = None, maxVal = None, exceptionHandler = None, repeatOnException = False):
     self.start, self.end, self.step, self.func = start, end, step, func
@@ -2457,12 +2497,32 @@ class maybeCalcIterator(object):
     x, self.curr = self.curr, self.curr + self.step
     try:
       v = self.func(x)
-      if self.minVal and v < self.minVal:
-        self.min_clip = True
-        v = self.minVal
-      elif self.maxVal and v > self.maxVal:
-        self.max_clip = True
-        v = self.maxVal
+      #v = np.array([max(-1,min(1,e)) for e in v])
+
+      #clip_low = np.where(np.any(v < self.minVal, axis = 0))
+      #self.min_clip = len(clip_low) > 0
+      #v[clip_low] = self.minVal
+
+      #clip_high = np.where(np.any(v > self.maxVal, axis = 0))
+      #self.max_clip = len(clip_high) >0
+      #v[clip_high] = self.maxVal
+      
+      # Clip
+      # After trying multiple options, not involving numpy seemed to be the fastest?
+      for i in range(len(v)):
+        if self.minVal and v[i] < self.minVal:
+          self.min_clip = True
+          v[i] = self.minVal
+        elif self.maxVal and v[i] > self.maxVal:
+          self.max_clip = True
+          v[i] = self.maxVal
+
+      #if self.minVal and v < self.minVal:
+      #  self.min_clip = True
+      #  v = self.minVal
+      #elif self.maxVal and v > self.maxVal:
+      #  self.max_clip = True
+      #  v = self.maxVal
       return v
     
     except Exception as e:
@@ -2499,7 +2559,7 @@ class AudioPlayer:
     self.info_update_fn = info_update
 
   def pauseOnException(self, e):
-    msg = f"[paused] Runtime Exception at x={str(self.index)}:\n{type(e).__name__}: {str(e)}"
+    msg = f"[paused] Runtime Exception at x={str(self.index)}:\n{type(e).__name__}: {e}"
     if self.info_update_fn:
       self.info_update_fn(msg)
     else:
@@ -2536,7 +2596,7 @@ class AudioPlayer:
     lines = ax.plot(X, Y)[0]
     self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.global_config.start, self.global_config.start+self.global_config.step * 10000, self.global_config.step, self.exp_as_func)])[0]
 
-  # TODO: Why doesn't it actually close?
+  # TODO: Why doesn't it actually close on Mac? - this may be a bug with MPL
   def graphOff(self):
     plt.close('all')
     self.graph = None
@@ -2600,9 +2660,10 @@ class AudioPlayer:
   #      return 0
 
 
-  def audioThread(self, global_config):
+  def audioThread(self, global_config): # The config is needed to dynamically change start/end
     try:
       p = pyaudio.PyAudio()
+
       stream = p.open(format=pyaudio.paFloat32,
                       channels = global_config.channels,
                       rate = global_config.rate,
@@ -2635,8 +2696,20 @@ class AudioPlayer:
             self.nextStart = None
 
         iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = self.pauseOnException, repeatOnException = True)
-        for chunk in chunker(iter, global_config.frameSize):
-          stream.write( struct.pack('<%df' % len(chunk), *chunk) )
+        for chunk in npchunker(iter, global_config.frameSize, global_config.channels, dtype=np.float32):
+          #with open("/Users/justin/justinTmp/loggy.txt", 'a') as loggy:
+          #  print(chunk, file = loggy)
+          #pchunk = str(hex(id(chunk)))
+          chunkold = chunk
+          chunk = np.ravel(chunk)
+          assert np.may_share_memory(chunkold, chunk) # Ensures that the ravel did not make a deep copy of chunk for performance reasons
+          #with open("/Users/justin/justinTmp/loggy.txt", 'a') as loggy:
+          #  print(global_config.frameSize, file = loggy)
+          #  print(f'{pchunk}, {str(hex(id(chunk)))}', file = loggy)
+          
+
+          r = struct.pack('<%df' % len(chunk), *chunk)
+          stream.write( r )
           self.updateGraphState() # Have this thread manage the graph
           cont = False
           self.index = iter.curr
@@ -2651,7 +2724,7 @@ class AudioPlayer:
           
           if self.graph is not None:
             timenow = time.time()
-            if len(chunk) == frameSize and timenow > graphtimer+0.1: # Draw the graph if enabled
+            if int(len(chunk)/global_config.channels) == frameSize and timenow > graphtimer+0.1: # Draw the graph if enabled
               fig, ax, lines = self.graph
               graphtimer = timenow
               lines.set_ydata(chunk)
@@ -2674,8 +2747,9 @@ class AudioPlayer:
       pass
     finally:
       global_config.shutdown = True
-      stream.stop_stream()
-      stream.close()
+      if stream is not None:
+        stream.stop_stream()
+        stream.close()
       p.terminate()
       sys.stderr.write("Audio player shut down.\n")
         
@@ -2698,8 +2772,6 @@ class CalcWave:
     # Fills the global_config object based on all the applicable information as passed as arguments
     self.global_config.start = args.beg
     self.global_config.end = args.end
-    #global_config.channels = args.channels # Note that right now, "channels" is not used.
-    self.global_config.channels = 1
     self.global_config.rate = args.rate
     self.global_config.frameSize = args.buffer
     self.args = args
@@ -2710,7 +2782,7 @@ class CalcWave:
 
     self.priorProjectExists = os.path.exists(args.file)
     if args.file and not self.priorProjectExists:
-      print('\nCreating new project file "{args.file}"', file = sys.stderr)
+      print(f'\nCreating new project file "{args.file}"', file = sys.stderr)
     
     # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
     if args.export:
@@ -2719,6 +2791,10 @@ class CalcWave:
           sys.exit(0)
     #print("Done")
 
+    self.channels_is_default = False
+    self.buffer_is_default = False
+    self.global_config.channels = self.args.channels
+    self.global_config.frameSize = self.args.buffer
     if self.priorProjectExists:
       self.loadProject(self.args.file) # Populates or updates config with additional project data
 
@@ -2744,9 +2820,9 @@ class CalcWave:
     # Update the Evaluator to reflect the current AUDIO_MAP
     if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_MAP
       prog = self.global_config.evaluator.getText() if self.global_config.evaluator else self.get_default_prog()
-      self.global_config.evaluator = Evaluator(prog, audio_map = self.global_config.AUDIO_MAP)
+      self.global_config.evaluator = Evaluator(prog, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
     elif not self.global_config.evaluator:
-      self.global_config.evaluator = Evaluator(self.get_default_prog())
+      self.global_config.evaluator = Evaluator(self.get_default_prog(), channels = self.global_config.channels)
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
   
@@ -2820,20 +2896,22 @@ class CalcWave:
     #parser.add_argument('-x', '--expr', type = str, default = "0",
     #                    help = "A function in terms of x to preload into the editor (it may help to surround this in single quotes). Default is 0 in gui mode.")
     parser.add_argument("-b", "--beg", type = int, default = -100000,
-                        help = "The lower range of x to start from.")
+                        help = "The lower range of x to start from. No effect if loading an existing project.")
     parser.add_argument("-e", "--end", type = int, default = 100000,
-                        help = "The upper range of x to end at.")
+                        help = "The upper range of x to end at. No effect if loading an existing project.")
+    parser.add_argument("-c", "--channels", type = int, default = 0,
+                        help = "The number of audio channels to use (default 1). Values for each can be set using main[channelno] = value. If specified, the value will be updated when loading an existing project.")
     parser.add_argument("-o", "--export", type = str, default = None, nargs = '?',
                         help = "Generate, and export to the specified file in WAVE format.")
-    parser.add_argument("-y", "--yes", type = bool, default = "store_false", nargs = '?',
+    parser.add_argument("-y", "--yes", type = bool, default = False, nargs = '?',
                         help = "Automatically confirms Y/n prompts")
     #parser.add_argument("--channels", type = int, default = 1,
     #                    help = "The number of audio channels to use")
-    parser.add_argument("-d", "--float32", action="store_true", help = "Export audio as float32 wav (still clipped between -1 and 1)")
+    parser.add_argument("--int", action="store_true", default=False, help = "By default, audio will be exported as float32 wav. Specify this to export audio as integer wav.")
     parser.add_argument("--rate", type = int, default = 44100,
                         help = "The audio rate to use")
-    parser.add_argument("--buffer", type = int, default = 1024,
-                        help = "The audio buffer frame size to use. This is the length of the chunks of floats, not the memory it will use.")
+    parser.add_argument("--buffer", type = int, default = 0,
+                        help = "The audio buffer frame size to use. This is the length of chunks of floats, not the memory it will use. If specified, the value will be updated when loading an existing project.")
     #parser.add_argument("--cli", default = False, action = "store_true",
     #                    help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching the curses UI")
 
@@ -2841,6 +2919,17 @@ class CalcWave:
       argv = sys.argv
     
     args = parser.parse_args(argv) #Parse arguments
+    if args.channels == 0:
+      self.channels_is_default = True
+      args.channels = pyaudio.PyAudio().get_default_output_device_info()['maxOutputChannels']
+    if args.buffer == 0:
+      self.buffer_is_default = True
+      args.buffer = 1024
+    
+    splext = os.path.splitext(args.file)
+    if len(splext) == 2 and splext[1] != ".cw":
+      print('Warning: Project file does not have extension ".cw". This is a convention. Continuing anyways...', file = sys.stderr)
+
     return args
 
 
@@ -2854,14 +2943,18 @@ class CalcWave:
     self.global_config.end = dict['end']
     self.global_config.step = dict['step']
     self.global_config.rate = dict['rate']
-    self.global_config.channels = dict['channels']
-    self.global_config.frameSize = dict['frameSize']
+
+    # If you have changed the number of channels from the default, override what was configured in the project
+    if self.channels_is_default == True:
+      self.global_config.channels = dict['channels']
+    if self.buffer_is_default == True:
+      self.global_config.frameSize = dict['frameSize']
     self.global_config.SaveTimer = self
     
     if self.is_loaded_audio_present():
-      self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP)
+      self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
     else:
-      self.global_config.evaluator = Evaluator(dict['expr'])
+      self.global_config.evaluator = Evaluator(dict['expr'], channels = self.global_config.channels)
     return self.global_config
   
   # Loads a single new audio file and adds it to global_config.AUDIO_MAP. Does not update global_config.evaluator with args: (..., audiofile=...).
@@ -2912,7 +3005,7 @@ class CalcWave:
   # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
   # TODO: Update the default example based on the audio files provided!!
   def get_default_prog(self) -> str:
-    return "main = 0"
+    return "main[:] = 0"
 
   # Initializes an AudioPlayer (evaluator and stream player) object based on the global_config object currently configured in this class
   def create_audio_player(self):
@@ -2962,7 +3055,7 @@ class CalcWave:
       if not self.global_config.evaluator:
         print("Error: Incorrect _setup: global_config.evaluator is not set")
         exit(1)
-      exportAudio(self.args.export, self.global_config, None, None, dtype = float if self.args.float32 else int)
+      exportAudio(self.args.export, self.global_config, None, None, dtype = int if self.args.int else float)
       sys.exit(0)
     
     saveTimer = self.create_save_timer()
@@ -2970,21 +3063,17 @@ class CalcWave:
 
     window = None
     scr = self.init_curses()
+    exc = None
     try:
       #Start the GUI input thread
-      window = WindowManager(self.global_config, scr, self.global_config.evaluator.getText(), audioPlayer, exportDtype = float if self.args.float32 else int)
+      window = WindowManager(self.global_config, scr, self.global_config.evaluator.getText(), audioPlayer, exportDtype = int if self.args.int else float)
       window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
       saveTimer.setTitleWidget(window.menu.title)
       audioPlayer.set_info_update_fn(window.getInfoDisplay().updateInfo)
       audioPlayer.play() # The program hangs on this call until it is ended.
     except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
-      if window != None:
-        window.setRedirectOutput(False)
-        window.stopCursesSettings(scr)
-      self.teardown_curses(scr)
-      
       print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
-      raise e
+      exc = e # Hold that thought...
     finally:
       saveTimer.setTitleWidget(None)
       saveTimer.timerOff()
@@ -2992,12 +3081,15 @@ class CalcWave:
 
       if window != None:
         window.setRedirectOutput(False)
-        window.stopCursesSettings(scr)
+        #window.stopCursesSettings(scr)
       self.teardown_curses(scr)
 
       self.global_config.shutdown = True
       if window:
         window.thread.join()
+  
+      if exc:
+        raise exc
 
       
 
@@ -3011,7 +3103,7 @@ class CalcWave:
     expr_is_default = args.expr == "0"
 
     global_config = Config()
-    global_config.evaluator = Evaluator("main = " + args.expr)
+    
     #Set variables
     global_config.start = args.beg
     global_config.end = args.end
@@ -3019,7 +3111,7 @@ class CalcWave:
     global_config.channels = 1
     global_config.rate = args.rate
     global_config.frameSize = args.buffer
-      
+    global_config.evaluator = Evaluator("main = " + args.expr, channels = global_config.channels)
     
     # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
     saveTimer = None

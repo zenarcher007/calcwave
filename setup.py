@@ -12,7 +12,7 @@ setup(
   download_url = 'https://github.com/zenarcher007/calcwave/archive/refs/tags/v1.6.3.tar.gz',
   keywords = ['cross-platform', 'audio synthesis', 'terminal', 'user-friendly'],   # Keywords that define your package best
   install_requires=[
-    'numpy',
+    'numpy>=1.23',
     'argparse',
     'windows-curses ; platform_system=="Windows"',
   ],
