@@ -1701,7 +1701,7 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = float):
 
 # Adapted from https://stackoverflow.com/a/15650213
 def get_wav_header(totalsize, sample_rate, dtype, channels):
-  byte_count = (totalsize) * (4 if dtype == float else 2) # 32-bit floats
+  byte_count = (totalsize) * (4 if dtype == float else 2) * channels # 32-bit floats
   # write the header
   wav_file = struct.pack('<ccccIccccccccIHHIIHHccccI',
     b'R', b'I', b'F', b'F',
@@ -2702,16 +2702,9 @@ class AudioPlayer:
 
         iter = maybeCalcIterator(start, end, step, evaluator.evaluate, minVal = -1, maxVal = 1, exceptionHandler = self.pauseOnException, repeatOnException = True)
         for chunk in npchunker(iter, global_config.frameSize, global_config.channels, dtype=np.float32):
-          #with open("/Users/justin/justinTmp/loggy.txt", 'a') as loggy:
-          #  print(chunk, file = loggy)
-          #pchunk = str(hex(id(chunk)))
           chunkold = chunk
           chunk = np.ravel(chunk)
           assert np.may_share_memory(chunkold, chunk) # Ensures that the ravel did not make a deep copy of chunk for performance reasons
-          #with open("/Users/justin/justinTmp/loggy.txt", 'a') as loggy:
-          #  print(global_config.frameSize, file = loggy)
-          #  print(f'{pchunk}, {str(hex(id(chunk)))}', file = loggy)
-          
 
           r = struct.pack('<%df' % len(chunk), *chunk)
           stream.write( r )
@@ -2977,9 +2970,6 @@ class CalcWave:
     apath = os.path.abspath(self.args.file)
     pardirlist = apath.split('/')[:-1]
     os.chdir('/'.join(pardirlist))
-    #self.main_old(argv)
-    #args = self.parse_args(argv)
-    #self.set_config_defaults(args)
 
     # If in cli mode, simply try to import the available program, write out an audio file, and exit.
     if self.args.export:
