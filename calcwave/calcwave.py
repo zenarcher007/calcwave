@@ -144,6 +144,9 @@ class SaveTimer:
 
   def timerOff(self):
     self.timerstate = False
+
+  def getFilepath(self):
+    return self.filepath
   
   # Saves to the file
   def save(self):
@@ -171,8 +174,7 @@ class SaveTimer:
 
 
 # This represents a left-corner starting location and an row/col size.
-# Unlike curses function calls, this uses the more standard (x,y)
-# convention as opposed to (y,x). It accepts an x,y point followed by an x,y size.
+# This is to aid in handling curses coordinates and simplify design
 class Box:
   def __init__(self, rowSize, colSize, rowStart, colStart):
     self.colStart = colStart
@@ -1227,7 +1229,7 @@ class Evaluator:
     if not alias in self.audio_aliases:
       self.audio_aliases.add(alias)
       audioarr = None
-      if not alias in self.audio_map.keys():
+      if not alias in self.audio_map.keys():      
         if not os.path.exists(path):
           raise FileNotFoundError('load "{alias}": path "{path}" does not exist.')
         audioarr = self.loadAudioFile(path)
@@ -2595,7 +2597,7 @@ class AudioPlayer:
     for i in range(len(lines)):
       lines[i].set_label("Channel " + str(i))
     fig.legend()
-
+    plt.close(1) # Note that this does not fix the problem! I am not sure why two figures are created.
     self.graph = (fig, ax, lines)
 
 
@@ -2753,7 +2755,6 @@ class AudioPlayer:
               if max_clip:
                 ax.plot([xd[0], xd[-1]], [1, 1], linewidth=3, color='red')
               
-              plt.close(1) ### Note that this does not fix the problem!! I am not sure why two figures are created.
               plt.draw()
               plt.pause(0.001)
     
@@ -2941,8 +2942,8 @@ class CalcWave:
   # This will also:
   # * Populate global_config.AUDIO_MAP if audio files are to be loaded.
   # * 
-  def create_save_timer(self):
-    saveTimer = SaveTimer(2, self.args.file, self.global_config) # Save every 2 seconds if changes are present
+  def create_save_timer(self, filepath):
+    saveTimer = SaveTimer(2, filepath, self.global_config) # Save every 2 seconds if changes are present
     self.global_config.SaveTimer = saveTimer # this exists in the config so it can be notified of changes
     saveTimer.timerOn() # Start autosave timer
     return saveTimer
@@ -2971,6 +2972,11 @@ class CalcWave:
 
   # Runs the program with the current configuration
   def main(self):
+    # Set the CWD to the project file directory
+    # I will hope this works correctly on Windows
+    apath = os.path.abspath(self.args.file)
+    pardirlist = apath.split('/')[:-1]
+    os.chdir('/'.join(pardirlist))
     #self.main_old(argv)
     #args = self.parse_args(argv)
     #self.set_config_defaults(args)
@@ -2983,7 +2989,7 @@ class CalcWave:
       exportAudio(self.args.export, self.global_config, None, None, dtype = int if self.args.int else float)
       sys.exit(0)
     
-    saveTimer = self.create_save_timer()
+    saveTimer = self.create_save_timer(apath)
     audioPlayer = self.create_audio_player()
 
     window = None
