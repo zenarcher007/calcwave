@@ -1206,7 +1206,7 @@ class Evaluator:
     self.audio_map = audio_map
     #symbolTable['log'] = None
     self.symbolTable['x'] = 0
-    self.symbolTable["main"] = np.zeros(channels, dtype=np.float32)
+    self.symbolTable["out"] = np.zeros(channels, dtype=np.float32)
     self.symbolTable["load"] = self.load # For syntactical loading of audio files
     #if audio_map != []:
     #  for arr in audio_map.values():
@@ -1251,8 +1251,10 @@ class Evaluator:
 
     # Note: samplerate is not used for now... This could cause issues...
     arr, samplerate = sf.read(path, always_2d = True)
-    channels = arr.shape[1]
-    audioarr = arr.reshape(channels, -1).astype(float)
+    audioarr = arr
+    #channels = arr.shape[1]
+    #audioarr = arr.reshape(channels, -1).astype(float)
+    
     #print(arr.shape)
     #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
     #nparr = np.array(arr)
@@ -1274,7 +1276,7 @@ class Evaluator:
   # Gets the last logged value, or the last computed value if none was specified
   # Note: 'log' is Deprecated
   def getLog(self):
-    return str(self.symbolTable['main'])
+    return str(self.symbolTable['out'])
     #log = self.symbolTable['log']
     #if log is None:
     #  return str(self.symbolTable['main'])
@@ -1283,11 +1285,11 @@ class Evaluator:
 
   # Evaluates the expression code with the global value x, and returns the result (stored in var "main"). Throws any error thrown by exec.
   def evaluate(self, x):
-    #self.symbolTable["main"] = np.zeros(2, dtype=np.float32)
+    #self.symbolTable["out"] = np.zeros(2, dtype=np.float32)
     self.symbolTable['x'] = x # Add x to the internal symbol table
     exec(self.prog, self.symbolTable, self.symbolTable) # Run compiled program with scope of symbolTable
     self.memory_class.reset() # This resets the count of function calls for memistic functions to 0 (as each's data is mapped to its call number)
-    return self.symbolTable["main"] # Return result
+    return self.symbolTable["out"] # Return result
 
 
 # Handles GUI
@@ -2552,8 +2554,7 @@ class AudioPlayer:
   
 
   def enableGraph(self):
-    with threading.Lock():
-      self.isGraphEnabled = True
+    self.isGraphEnabled = True
 
   def set_info_update_fn(self, info_update):
     self.info_update_fn = info_update
@@ -2569,8 +2570,7 @@ class AudioPlayer:
     # TODO: Make it display the error message in the display. This function will be disabled until this is implemented.
   
   def disableGraph(self):
-    with threading.Lock():
-      self.isGraphEnabled = False
+    self.isGraphEnabled = False
 
   # It periodically will check if the graph should be enabled to make it so the graph won't be enabled from another thread. This is terrible code.
   def updateGraphState(self):
@@ -2584,17 +2584,20 @@ class AudioPlayer:
 
   def graphOn(self):
     plt.ion()
-    plt.ylim([-1,1])
-    #X = [x for x in self.calcIterator(self.global_config.start, self.global_config.end, self.global_config.step), lambda x: x]
-    #audioFunc = self.getAudioFunc()
-    #if not audioFunc:
-    #  audioFunc = lambda x: 0 # If compiling an audio function failed, make a function that always returns 0
-    X = [x for x in maybeCalcIterator(self.global_config.start, self.global_config.start+abs(self.global_config.step) * (self.global_config.frameSize-1), abs(self.global_config.step), lambda x: x)]
-    Y = [0.0] * self.global_config.frameSize #[x for x in self.maybeCalcIterator(self.global_config.start, self.global_config.start+self.global_config.step * self.global_config.frameSize, self.global_config.step, audioFunc)]
+    plt.close('all')
+    plt.ylim([-1, 1])
+    X = list(range(self.global_config.frameSize))
+    Y = [0.0] * self.global_config.frameSize
     fig, ax = plt.subplots()
-    ax.set_ylim(bottom = -1, top = 1)
-    lines = ax.plot(X, Y)[0]
-    self.graph = (fig, ax, lines) #plt.plot([x for x in self.calcIterator(self.global_config.start, self.global_config.start+self.global_config.step * 10000, self.global_config.step, self.exp_as_func)])[0]
+
+    # Create one line per channel, stored in a list
+    lines = [ax.plot(X, Y)[0] for _ in range(self.global_config.channels)]
+    for i in range(len(lines)):
+      lines[i].set_label("Channel " + str(i))
+    fig.legend()
+
+    self.graph = (fig, ax, lines)
+
 
   # TODO: Why doesn't it actually close on Mac? - this may be a bug with MPL
   def graphOff(self):
@@ -2721,24 +2724,41 @@ class AudioPlayer:
               break
           
           
-          
+          ### Update the graph
           if self.graph is not None:
             timenow = time.time()
-            if int(len(chunk)/global_config.channels) == frameSize and timenow > graphtimer+0.1: # Draw the graph if enabled
+            if int(len(chunk) / global_config.channels) == frameSize and timenow > graphtimer + 0.1:
               fig, ax, lines = self.graph
+              ax.set_ylim(bottom=-1, top=1)
               graphtimer = timenow
-              lines.set_ydata(chunk)
-              xd = lines.get_xdata()
-              min_clip, max_clip = iter.get_clipping()
-              while len(ax.lines) > 1:
-                ax.lines[1].remove()
-              if min_clip:
-                ax.plot([xd[0], xd[-1]], [-1, -1], linewidth = 1.5, color = 'red')
+              
+              xd = list(range( int(self.index), int(self.index + global_config.frameSize) ))
+              ax.set_xlim(int(self.index), int(self.index + global_config.frameSize) )
 
+              # Update each line with the corresponding channel data
+              for i in range(global_config.channels):
+                lines[i].set_ydata(chunkold[:, i])
+                lines[i].set_xdata(xd)
+                #lines[i].set_xdata(list(range(int(self.index), int(self.index + global_config.frameSize))))
+              
+              min_clip, max_clip = iter.get_clipping()
+
+              # Ensure to remove any extra lines (other than channel plots and clipping lines)
+              while len(ax.lines) > global_config.channels:
+                ax.lines[global_config.channels].remove()
+              
+              if min_clip:
+                ax.plot([xd[0], xd[-1]], [-1, -1], linewidth=3, color='red')
+              
               if max_clip:
-                ax.plot([xd[0], xd[-1]], [1, 1], linewidth = 1.5, color = 'red')
+                ax.plot([xd[0], xd[-1]], [1, 1], linewidth=3, color='red')
+              
+              plt.close(1) ### Note that this does not fix the problem!! I am not sure why two figures are created.
               plt.draw()
-              plt.pause(0.01)
+              plt.pause(0.001)
+    
+    
+
         if cont: continue
 
         
@@ -2840,7 +2860,7 @@ class CalcWave:
     parser.add_argument("-e", "--end", type = int, default = 100000,
                         help = "The upper range of x to end at. No effect if loading an existing project.")
     parser.add_argument("-c", "--channels", type = int, default = 0,
-                        help = "The number of audio channels to use (default 1). Values for each can be set using main[channelno] = value. If specified, the value will be updated when loading an existing project.")
+                        help = "The number of audio channels to use (default 1). Values for each can be set using out[channelno] = value. If specified, the value will be updated when loading an existing project.")
     parser.add_argument("-o", "--export", type = str, default = None, nargs = '?',
                         help = "Generate, and export to the specified file in WAVE format.")
     parser.add_argument("-y", "--yes", type = bool, default = False, nargs = '?',
@@ -2910,7 +2930,7 @@ class CalcWave:
   # based on whether there are audio input variables to be passed in. Note: "expr" is synonymous to "prog"
   # TODO: Update the default example based on the audio files provided!!
   def get_default_prog(self) -> str:
-    return "main[:] = 0"
+    return "out[:] = 0"
 
   # Initializes an AudioPlayer (evaluator and stream player) object based on the global_config object currently configured in this class
   def create_audio_player(self):
