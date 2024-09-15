@@ -2795,12 +2795,7 @@ class CalcWave:
     if args.file and not self.priorProjectExists:
       print(f'\nCreating new project file "{args.file}"', file = sys.stderr)
     
-    # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
-    if args.export:
-      if os.path.exists(args.export):
-        if not self._confirm_input('\nFile "{args.export}" already exists. Would you like to overwrite it?'):
-          sys.exit(0)
-    #print("Done")
+    
 
     self.channels_is_default = False
     self.buffer_is_default = False
@@ -2829,7 +2824,7 @@ class CalcWave:
     yes = {'yes','y', 'ye', ''}
     no = {'no','n'}
     
-    choice = raw_input().lower()
+    choice = input().lower()
     while True:
       if choice in yes:
         return True
@@ -2856,7 +2851,7 @@ class CalcWave:
                         help = "The number of audio channels to use (default 1). Values for each can be set using out[channelno] = value. If specified, the value will be updated when loading an existing project.")
     parser.add_argument("-o", "--export", type = str, default = None, nargs = '?',
                         help = "Generate, and export to the specified file in WAVE format.")
-    parser.add_argument("-y", "--yes", type = bool, default = False, nargs = '?',
+    parser.add_argument("-y", "--yes", action = 'store_true',
                         help = "Automatically confirms Y/n prompts")
     #parser.add_argument("--channels", type = int, default = 1,
     #                    help = "The number of audio channels to use")
@@ -2964,18 +2959,28 @@ class CalcWave:
 
   # Runs the program with the current configuration
   def main(self):
+
+    # If the file.wav already exists, ask the user if they want to overwrite it, exit the program if not
+    exportPath = None
+    if self.args.export:
+      if os.path.exists(self.args.export):
+        if not self._confirm_input(f'\nFile "{self.args.export}" already exists. Would you like to overwrite it?'):
+          sys.exit(0)
+      exportPath = os.path.abspath(self.args.export)
+    #print("Done")
+
     # Set the CWD to the project file directory
     # I will hope this works correctly on Windows
     apath = os.path.abspath(self.args.file)
     pardirlist = apath.split('/')[:-1]
     os.chdir('/'.join(pardirlist))
 
-    # If in cli mode, simply try to import the available program, write out an audio file, and exit.
+     # If in cli mode, simply try to import the available program, write out an audio file, and exit.
     if self.args.export:
       if not self.global_config.evaluator:
         print("Error: Incorrect _setup: global_config.evaluator is not set")
         exit(1)
-      exportAudio(self.args.export, self.global_config, None, None, dtype = int if self.args.int else float)
+      exportAudio(exportPath, self.global_config, None, None, dtype = int if self.args.int else float)
       sys.exit(0)
     
     saveTimer = self.create_save_timer(apath)
