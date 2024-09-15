@@ -37,6 +37,7 @@ import json
 import itertools
 import time
 import numpy as np
+import pyaudio
 
 # Supress SyntaxWarning from Math module
 import warnings
@@ -49,8 +50,6 @@ global useVirtualCursor
 useVirtualCursor = False
 # Decide which imports are neccessary based on arguments
 if len(sys.argv) == 1 or (not(sys.argv.count('-o') or sys.argv.count('--export'))): 
-  # Don't need pyaudio if just exporting audio as a file - only because this is a bit hard to install
-  import pyaudio
   #import matplotlib.pylab as plt
   #import matplotlib
   #from matplotlib import pyplot as plt
@@ -1688,14 +1687,14 @@ def exportAudio(fullPath, global_config, progressBar, infoPad, dtype = float):
         if infoPad:
           infoPad.updateInfo(progtext)
         else:
-          print(progtext, file=sys.stderr)
+          print('\r' + progtext, file=sys.stderr, end = '')
       i = i + int(len(chunk)/global_config.channels)
       j = j + 1
   progtext = "Exported as " + fullPath
   if infoPad:
     infoPad.updateInfo("Exported as " + fullPath)
   else:
-    print(progtext, file=sys.stderr)
+    print('\n' + progtext, file=sys.stderr)
 
 
 
