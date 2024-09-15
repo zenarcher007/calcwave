@@ -2778,8 +2778,6 @@ class CalcWave:
 
     # Check basic argument requirements, syntax, and path validity
     #print("Running checks...  ", end = '', file = sys.stderr)
-    self.test_arg_audiofile_correct_syntax()
-
     self.priorProjectExists = os.path.exists(args.file)
     if args.file and not self.priorProjectExists:
       print(f'\nCreating new project file "{args.file}"', file = sys.stderr)
@@ -2803,26 +2801,8 @@ class CalcWave:
     self._setup(argv)
   
   def _setup(self, argv):
-
-    # For each audio file and name present in --audio_files, populate the AUDIO_MAP. Assumes that every argument is
-    # correctly formatted and every file exists
-    if self.args.audiofile is not None:
-      for arg in self.args.audiofile:
-        arg = arg[0]
-        path, name = re.split(r'(?<!\\):', arg, maxsplit=1)
-        path = os.path.expanduser(path)
-        self.loadAudioFile(path, name)
-
-    # Update the default end based on the max length of all audio files loaded
-    if (not self.priorProjectExists) and self.is_loaded_audio_present():
-      self.global_config.end = max(len(data)-1 for data in self.global_config.AUDIO_MAP)
-
-    # Update the Evaluator to reflect the current AUDIO_MAP
-    if self.is_loaded_audio_present(): # Upgrade the evaluator to contain the AUDIO_MAP
-      prog = self.global_config.evaluator.getText() if self.global_config.evaluator else self.get_default_prog()
-      self.global_config.evaluator = Evaluator(prog, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
-    elif not self.global_config.evaluator:
-      self.global_config.evaluator = Evaluator(self.get_default_prog(), channels = self.global_config.channels)
+    if self.global_config.evaluator is None:
+      self.global_config.evaluator = Evaluator(self.get_default_prog(), channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
   
@@ -2845,41 +2825,6 @@ class CalcWave:
       else:
         sys.stderr.write("Please respond with 'yes' or 'no'")
 
-  # An internal test that runs a check on the arguments of --audiofile.
-  # Prints an error message and ends the program if the arguments are malformed,
-  # any of the files do not exist, or any of the variable names are duplicated.
-  def test_arg_audiofile_correct_syntax(self):
-    if self.args.audiofile is None:
-      return
-    seen_names = set()  # Track seen variable names to detect duplicates
-
-    for arg in self.args.audiofile:
-      arg = arg[0] # argparse makes it a double-nested list
-      try:
-        # Split using a regex that ignores escaped colons
-        path, name = re.split(r'(?<!\\):', arg)
-        path = os.path.expanduser(path)
-      except ValueError as e:
-        print(f'Error: argument "{arg}" is malformed. Expected format is "path:name".', file=sys.stderr)
-        sys.exit(1)
-
-      # Check if the file exists
-      if not os.path.exists(path):
-        print(f'Error: argument "{arg}": File does not exist: {path}', file=sys.stderr)
-        sys.exit(1)
-
-      # Check for duplicate variable names
-      if name in seen_names:
-        print(f'Error: argument "{arg}": Duplicate variable name "{name}".', file=sys.stderr)
-        sys.exit(1)
-
-      # Add the name to the seen set
-      seen_names.add(name)
-
-      
-      
-      
-
 
   def parse_args(self, argv = None):
     if argv[0] == sys.argv[0]:
@@ -2887,11 +2832,6 @@ class CalcWave:
     parser = argparse.ArgumentParser(description="A cross-platform script for creating and playing sound waves through mathematical expressions", prog="calcwave")
     
     parser.add_argument('file', type = str, help = "Project file path (*.cw) to load, created if it does not already exist. This will be autosaved - copy the project file as desired for backups")
-    parser.add_argument('-f', '--audiofile', type = str, default = None, action='append', nargs = 1,
-                        # New Proposal:
-                        #help = '-f <filepath>:<VAR_NAME> The audio file(s) to load into the interpereter. Named by VAR_NAME, these will be available in the editor scope as read-only numpy arrays by the shape "(channels, audio_map)". VAR_NAME must be a valid Python variable name. This argument may be repeated.')
-                        # Old configuration:
-                        help = 'The audio file to load into the interpereter. This data will be stored as a "read-only"** numpy array, and can be accessed by the "AUDIO_IN" variable added to the scope')
     # --expr is Deprecated
     #parser.add_argument('-x', '--expr', type = str, default = "0",
     #                    help = "A function in terms of x to preload into the editor (it may help to surround this in single quotes). Default is 0 in gui mode.")
@@ -2951,41 +2891,9 @@ class CalcWave:
       self.global_config.frameSize = dict['frameSize']
     self.global_config.SaveTimer = self
     
-    if self.is_loaded_audio_present():
-      self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
-    else:
-      self.global_config.evaluator = Evaluator(dict['expr'], channels = self.global_config.channels)
+    self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
     return self.global_config
   
-  # Loads a single new audio file and adds it to global_config.AUDIO_MAP. Does not update global_config.evaluator with args: (..., audiofile=...).
-  # Must update global_config.AUDIO_MAP with numpy arrays in the shape [channels][samples]
-  def loadAudioFile(self, path: str, name: str):
-    try:
-      # TODO: stop auto normalization??? https://github.com/bastibe/python-soundfile/issues/20
-      import soundfile as sf
-    except ImportError as e:
-      print("Error importing pydub module, needed for loading audio. You may install this using \"python3 -m pip install soundfile\". Note: the ffmpeg library will be needed for this.")
-      raise e
-    #filename, file_extension = os.path.splitext(path)
-    #a = pydub.AudioSegment.from_file(path)
-    #arr = a.get_array_of_samples()
-
-    # Note: samplerate is not used for now... This could cause issues...
-    arr, samplerate = sf.read(path, always_2d = True)
-    channels = arr.shape[1]
-    audioarr = arr.reshape(channels, -1).astype(float)
-    #print(arr.shape)
-    #arr = arr.reshape( (arr.shape[1], arr.shape[0]) )
-    #nparr = np.array(arr)
-    #print(audioarr.dtype, arr.dtype)
-    #print(np.mean(audioarr))
-    #time.sleep(2)
-    if not np.issubdtype(arr.dtype, np.floating):
-      audioarr /= np.iinfo(arr.dtype).max # Scale between -1 and 1 as float
-      #print("ISNOTFLOATING", arr.dtype, np.iinfo(arr.dtype).max, arr, audioarr)
-      #time.sleep(2)
-      
-    self.global_config.AUDIO_MAP[name] = audioarr #.append(audioarr)
 
     #return audioarr
 
@@ -2995,9 +2903,6 @@ class CalcWave:
     return self.global_config.evaluator is None or not self.global_config.evaluator.getText() == self.get_default_prog()
     # or (os.path.isfile(self.args.file)
   
-  # Reading the class's current configuration, returns whether audio is loaded in the AUDIO_MAP (using --audiofile)
-  def is_loaded_audio_present(self):
-    return not self.global_config.AUDIO_MAP in ({}, [], None) # Zilch, zero, nothing
 
 
   # Based on the class's current configuration,
@@ -3091,132 +2996,9 @@ class CalcWave:
       if exc:
         raise exc
 
-      
-
-    
-    
-  
-
-  def main_old(self, argv = None):
-    args = self.parse_args(argv)
-    
-    expr_is_default = args.expr == "0"
-
-    global_config = Config()
-    
-    #Set variables
-    global_config.start = args.beg
-    global_config.end = args.end
-    #global_config.channels = args.channels # Note that right now, "channels" is not used.
-    global_config.channels = 1
-    global_config.rate = args.rate
-    global_config.frameSize = args.buffer
-    global_config.evaluator = Evaluator("main = " + args.expr, channels = global_config.channels)
-    
-    # The program may be started either in GUI mode or CLI mode. Test for GUI mode vvv
-    saveTimer = None
-    if args.cli:
-      if args.expr == "":
-        print("Error: --expr is required with --cli", file = sys.stderr)
-        sys.exit(1)
-      exportAudio(args.file, global_config, None, None, type = float if args.float32 else int) # CLI operation
-      sys.exit(0)
-    else: # GUI mode
-      saveTimer = SaveTimer(2, args.file, global_config) # Save every 2 seconds if changes are present
-      global_config.SaveTimer = saveTimer
-      if os.path.isfile(args.file): # If the calcwave project file specified is present
-        # Load from file path if exists; else, leave to be created.
-        # Note that global_config contains a (self) instance of SaveTimer upon calling load()
-        #if args.audiofile:
-        #  global_config = saveTimer.load(audio_file = args.audiofile[0]) # Load from file passed into SaveTimer
-        #print(global_config.evaluator)
-        expr_is_default = False
-      #else:
-      if args.audiofile:
-        for file in args.audiofile:
-          # Loads the audio file into the linked global store (and returns the entire updated audio array)
-          saveTimer.loadAudioFile(file[0])
-      saveTimer.timerOn() # Start autosave timer
-
-      #print(global_config.evaluator)
-      #time.sleep(2)
-
-    # Update starting setup if defaults and audio files are specified
-    if not global_config.AUDIO_MAP in ([],None):
-      #if global_config.evaluator:
-      #  if global_config.evaluator.getText() == "main = " + args.expr:
-      if expr_is_default:
-        global_config.start = 0
-        global_config.end = max(len(data)-1 for data in global_config.AUDIO_MAP)
-        if args.expr == "0":
-          # Make a similar Evaluator, this time with the audio_map attached, and a default program
-          global_config.evaluator = Evaluator("""
-  # Example: Syntax -> AUDIO_IN[audio_no][channel_no][sample_no]
-  audio_file = AUDIO_IN[0] # Read audio file data #0
-  channels = audio_file[:] # An array of per-channel samples arrays
-  num_channels = len(channels) # The number of channels
-  main = sum(channels[:][int(x)])/num_channels # Average of all channels""", audio_map = global_config.AUDIO_MAP)
-        else:
-          # Make a similar Evaluator, this time with the audio_map attached, but preserve the user-set text
-          global_config.evaluator = Evaluator(global_config.evaluator.getText(), audio_map = global_config.AUDIO_MAP)
-    sys.stderr.write("Starting GUI mode\n")
-
-    window = None
-    scr = None
-    menu = None
-    
-
-    scr = curses.initscr()
-    curses.curs_set(0) # Disable the actual cursor
-    rows, cols = scr.getmaxyx()
-      
-    if curses.has_colors():
-      curses.start_color()
-      curses.use_default_colors()
-
-    # Initialize AudioPlayer
-    audioClass = AudioPlayer(global_config)
-
-    window = None
-    try:
-      # rowSize, colSize, rowStart, colStart
-      #Start the GUI input thread
-      window = WindowManager(global_config, scr, global_config.evaluator.getText(), audioClass, exportDtype = float if args.float32 else int)
-      window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
-      saveTimer.setTitleWidget(window.menu.title)
-    except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
-      if window != None:
-        window.setRedirectOutput(False)
-      curses.curs_set(1) # Re-enable the actual cursor
-      curses.echo()
-      curses.nocbreak()
-      scr.keypad(False)
-      curses.endwin()
-      print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
-      raise e
-    
-    # Keep in mind that menu will be None when it is not in GUI mode...
-    if window:
-      audioClass.set_info_update_fn(window.getInfoDisplay().updateInfo)
-    audioClass.play() # Hangs on this until closed in GUI operation.
-    window.setRedirectOutput(False)
-    saveTimer.setTitleWidget(None)
-    curses.curs_set(1) # Re-enable the actual cursor
-    
-    saveTimer.timerOff()
-    saveTimer.save()
-
-    # When that exits
-    global_config.shutdown = True
-    
-    if window:
-      window.thread.join()
-    window.stopCursesSettings(scr)
-      
 
 def main(argv = None):
   CalcWave(argv).main()
 
 if __name__ == "__main__":
   main()
-    
