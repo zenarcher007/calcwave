@@ -1834,10 +1834,7 @@ class startRangeMenuItem(NumericalMenuSetting):
     except ValueError:
       pass
     else:
-      if self.global_config.AUDIO_MAP is not None and value < 0:
-        actionMsg = "Start range cannot be less than starting bound of AUDIO_IN. Value updated to 0"
-        self.updateValue(0)
-      elif value > self.global_config.end: # Don't allow crossing start / end ranges
+      if value > self.global_config.end: # Don't allow crossing start / end ranges
         actionMsg = "Start range cannot be greater than end range!"
         self.updateValue(self.global_config.start)
       else:
