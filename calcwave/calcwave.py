@@ -161,6 +161,7 @@ class Config:
     self.SaveTimer = None
     self.updateAudio = False # Audio interrupt to read new data
     self.output_fd = None # File descriptor for pipe of info display; check if this is set before using
+    self.output_device_index = None
     self.AUDIO_MAP = {}
 
     self.lock = threading.Lock()
@@ -1424,7 +1425,8 @@ class AudioPlayer:
                       channels = global_config.channels,
                       rate = global_config.rate,
                       output = True,
-                      frames_per_buffer = global_config.frameSize)
+                      frames_per_buffer = global_config.frameSize,
+                      output_device_index = global_config.output_device_index)
       
       
       frameSize = global_config.frameSize
@@ -1612,6 +1614,8 @@ class CalcWave:
                         help = "The audio baud rate to set the project with. Note: this will affect the pitch of the audio!")
     parser.add_argument("--buffer", type = int, default = 0,
                         help = "The audio buffer frame size to set the project with. This is the length of chunks of floats, not the memory it will use. If specified, the value will be updated when loading an existing project.")
+    parser.add_argument("--output-device", type = int, default = -1,
+                        help = "The index of the output device to use.")
     #parser.add_argument("--cli", default = False, action = "store_true",
     #                    help = "Use cli mode - will export generated audio to the provided file path as wav audio, without launching the curses UI")
 
@@ -1646,6 +1650,9 @@ class CalcWave:
     self.global_config.end = dict['end']
     self.global_config.step = dict['step']
     self.global_config.rate = dict['rate']
+    if self.args.output_device:
+      if self.args.output_device != -1:
+        self.global_config.output_device_index = self.args.output_device
 
     # If you have changed the number of channels from the default, override what was configured in the project
     if self.channels_is_default == True:
