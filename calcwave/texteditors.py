@@ -83,25 +83,25 @@ class BasicEditor:
       newPos = self.cursorPos.relative(row = -1, col = 0)
       if newPos.row >= 0:
         self.setCursorIndex(newPos)
-        self.refresh()
+        #self.refresh()
         return True
     elif ch == curses.KEY_DOWN:
       newPos = self.cursorPos.relative(row = 1, col = 0)
       if newPos.row < self.shape.rowSize:
         self.setCursorIndex(newPos)
-        self.refresh()
+        #self.refresh()
         return True
     elif ch == curses.KEY_LEFT:
       newPos = self.cursorPos.relative(row = 0, col = -1)
       if newPos.row >= 0:
         self.setCursorIndex(newPos)
-        self.refresh()
+        #self.refresh()
         return True
     elif ch == curses.KEY_RIGHT:
       newPos = self.cursorPos.relative(row = 0, col = 1)
       if newPos.row < self.shape.colSize:
         self.setCursorIndex(newPos)
-        self.refresh()
+        #self.refresh()
         return True
     else:
       return False
@@ -138,7 +138,7 @@ class LineEditor(BasicEditor):
   def setText(self, text):
     self.text = list(text)
     self.goToBeginning()
-    self.refresh()
+    #self.refresh()
 
    # Scrolls left one space
   def scrollLeft(self):
@@ -173,13 +173,13 @@ class LineEditor(BasicEditor):
   def goToBeginning(self):
     self.setCursorPos(self.cursorPos.withCol(0))
     self.scrollOffset = 0
-    self.refresh()
+    #self.refresh()
   
   # Sets the cursor at the end, and puts the scroll window in view.
   def goToEnd(self):
     self.setCursorPos( self.cursorPos.withCol(min(len(self.text), self.shape.colSize-1)))
     self.scrollOffset = max(0, len(self.text) - self.shape.colSize)
-    self.refresh
+    #self.refresh()
 
   def refresh(self):
     self.win.clear()
@@ -201,7 +201,7 @@ class LineEditor(BasicEditor):
     if self.goLeft():
       ###self.win.delch(0, self.cursorPos.col)
       self.text.pop(self.scrollOffset + self.cursorPos.col)
-      self.refresh()
+      #self.refresh()
     else:
       return False
     return True
@@ -216,7 +216,7 @@ class LineEditor(BasicEditor):
       retVal = self.backspace()
     else:
       self.insert(ch)
-    self.refresh()
+    #self.refresh()
     return retVal
 
 
@@ -250,8 +250,8 @@ class TextEditor(BasicEditor):
       self.goToEol()
       if i < lineCount-1:
         self.enter()
-        self.refresh()
-    self.refresh()
+        #self.refresh()
+    #self.refresh()
 
 
   def getText(self):
@@ -438,7 +438,7 @@ class TextEditor(BasicEditor):
       if isLast: break
     self.win.chgat(self.cursorPos.row, self.cursorPos.col, 1, curses.A_REVERSE) # Refresh cursor, in case it drew on top of it
     
-    self.win.refresh()
+    #self.win.refresh()
       
       
 
@@ -560,7 +560,7 @@ class TextEditor(BasicEditor):
     self.data.insert(self.dataPos.row+1, oldTail) if self.dataPos.row != len(self.data)-1 else self.data.append(oldTail) # Add the tail of the last line (if any) to a new line
     for i in range(len(oldTail)): # Delete tail of original line
       self.data[self.dataPos.row].pop(self.dataPos.col)
-    self.refresh() # Refresh optimization will not otherwise see it, as it is switching lines
+    #self.refresh() # Refresh optimization will not otherwise see it, as it is switching lines
     self.mvLine(1) # Go to next line
     self.setCursorPos(self.getLineCurPos().withCol(0)) # Go to beginning of line
     self.dataPos = self.dataPos.withCol(0) # Go to beginning of line in data pointer
@@ -651,7 +651,7 @@ class TextEditor(BasicEditor):
       retVal = self.backspace()
     else:
       self.insertChar(chr(key))
-    self.refresh()
+    #self.refresh()
     return retVal
   
 
@@ -882,7 +882,7 @@ class InputPad:
     #self.curPos(self.boxY1+int(column / xWidth, self.boxX1+(column % xWidth)))
     self.curPos(int(column / xWidth), column % xWidth)
     
-    self.win.refresh()
+    #self.win.refresh()
                 
   
   # Does the equivalent of a backspace. Includes workarounds for the many bugs it had...
@@ -931,4 +931,4 @@ class InputPad:
       self.insert(0, ch)
       self.goRight()
     
-    self.win.refresh()
+    #self.win.refresh()

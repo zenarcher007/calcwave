@@ -17,7 +17,9 @@ class BasicMenuItem:
     #self.toolTip = "Tool Tip"
     #self.hoverMsg = "Hover Message"
     #self.actionMsg = "Action Message"
-    self.refresh()
+    #self.refresh()
+    self._highlighted = False
+    self._highlight_changed = False
     
   # What should I (UIManager) call you?
   def getDisplayName(self):
@@ -25,8 +27,14 @@ class BasicMenuItem:
 
  # Calls refresh() on the window object
  # this must be lightweight, as it may be called often.
-  def refresh(self): 
+  def refresh(self):
     #with global_display_lock:
+    if self._highlight_changed is True:
+      self._highlight_changed = False
+      for row in range(0, self.shape.rowSize):
+        self.win.chgat(0, row, self.shape.colSize, curses.A_REVERSE if self._highlighted else curses.A_NORMAL)
+        curses.use_default_colors()
+    
     self.win.refresh()
 
   # Standard hooks to hide and show the cursor, if your widget has one.
@@ -40,7 +48,7 @@ class BasicMenuItem:
     self.win.erase()
     self.win.addstr(0, 0, text)
     #with global_display_lock:
-    self.win.refresh()
+    #self.win.refresh()
 
   def isOneshot(self):
     return False # By default, this item can enter and exit focus, rather than immediately exiting.
@@ -50,22 +58,27 @@ class BasicMenuItem:
     pass # This is a hook
    
   # Called when UIManager has the cursor over your item
+  # NOTE: Invoking other curses functions on top of this may cause the highlighting to disappear. This should be the last function called.
   def onHoverEnter(self):
-    for row in range(0, self.shape.rowSize):
-      self.win.chgat(0, row, self.shape.colSize, curses.A_REVERSE)
-    curses.use_default_colors()
+    self._highlighted = True
+    self._highlight_changed = True
+    #for row in range(0, self.shape.rowSize):
+    #  self.win.chgat(0, row, self.shape.colSize, curses.A_REVERSE)
+    #curses.use_default_colors()
     #with global_display_lock:
-    self.win.refresh()
+    #self.win.refresh()
     return "Hover Message"
   
   # Called when UIManager tells the cursor to leave your item
   def onHoverLeave(self):
-    self.hovering = False
-    for row in range(0, self.shape.rowSize):
-      self.win.chgat(0, row, self.shape.colSize, curses.A_NORMAL)
-    curses.use_default_colors()
+    self._highlighted = False
+    self._highlight_changed = True
+    # self.hovering = False
+    # for row in range(0, self.shape.rowSize):
+    #   self.win.chgat(0, row, self.shape.colSize, curses.A_NORMAL)
+    # curses.use_default_colors()
     #with global_display_lock:
-    self.win.refresh()
+    #self.win.refresh()
     
   # Sets messages displayed in the infoDisplay when selected or activated
  #def setToolTip(self, text):
@@ -145,7 +158,7 @@ class NamedMenuSetting(LineEditor, BasicMenuItem): # Extend the InputPad and Bas
   # Override InputPad type method
   def type(self, ch):
     super().type(ch)
-    self.refresh()
+    #self.refresh()
     
 
       
