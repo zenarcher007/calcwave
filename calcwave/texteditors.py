@@ -179,7 +179,7 @@ class LineEditor(BasicEditor):
   def goToEnd(self):
     self.setCursorPos( self.cursorPos.withCol(min(len(self.text), self.shape.colSize-1)))
     self.scrollOffset = max(0, len(self.text) - self.shape.colSize)
-    self.refresh
+    self.refresh()
 
   def refresh(self):
     self.win.clear()

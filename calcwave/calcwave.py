@@ -49,6 +49,9 @@ import matplotlib.pyplot as plt
 global global_display_lock
 global_display_lock = threading.Lock()
 
+global global_exception
+global_exception = None
+
 # This is necessary because some systems I tested on seemed to have inaccurate curses default key bindings
 # (eg. enter, escape, backspace wouldn't type the correct character), which is odd...
 detect_os_monkeypatch_curses_keybindings(curses_module = curses)
@@ -319,7 +322,9 @@ class WindowManager:
   def __init__(self, global_config, scr, initialExpr, audioClass, exportDtype = int):
     self.global_config = global_config
     self.scr = scr
+    self.audioClass = audioClass
     self.oldStdout = None
+    self.initialExpr = initialExpr
 
     self.initCursesSettings()
   
@@ -333,10 +338,22 @@ class WindowManager:
 
     self.menu = UIManager(Box(rowSize = 2, colSize = cols, rowStart = rows - 7, colStart = 0), global_config, audioClass, self.infoDisplay, exportDtype = exportDtype)
     
-    self.thread = threading.Thread(target=self.windowThread, args=(global_config, scr, self.menu, audioClass), daemon=True)
-    self.thread.start()
-    self.editor.setText(initialExpr)
+    #with global_display_lock:
+    #  self.editor.setText(initialExpr)
+    self.thread = None
   
+  def start(self):
+    if self.thread is None:
+      self.shutdown = False
+      self.thread = threading.Thread(target=self.windowThread, args=(self.global_config, self.scr, self.menu, self.audioClass), daemon=True)
+      self.thread.start()
+    
+  def stop(self):
+    if hasattr(self, 'thread'):
+      if self.thread is not None:
+        self.shutdown = True
+        self.thread.join()
+
   def initCursesSettings(self):
     self.scr.keypad(True)
     self.scr.nodelay(True)
@@ -366,8 +383,11 @@ class WindowManager:
     # Draw graphics
     with global_display_lock:
       self.menu.refreshAll()
-      self.editor.refresh()
       self.menu.title.refresh()
+      if self.initialExpr:
+        self.editor.setText(self.initialExpr)
+        self.initialExpr = None
+      
 
     self.focused = self.editor
     try:
@@ -417,11 +437,16 @@ class WindowManager:
           self.focused = self.menu
           self.focused.onFocus()
           
-    except (KeyboardInterrupt, SystemExit):
-      pass
+    except Exception as e:
+      if isinstance(e, KeyboardInterrupt) or isinstance(e, SystemExit):
+        pass
+      else:
+        global_exception = e
+        with open("calcwave_windowmanager_crash.log", 'w') as f:
+          f.write(traceback.format_exc())
+          sys.stderr.write("WindowManger thread has crashed; crash traceback written to calcwave_windowmanager_crash.log\n")
+        raise e
     finally:
-      sys.stderr.write("Shutting down GUI...\n")
-      #self.stopCursesSettings(self.scr)
       self.global_config.shutdown = True
       
   # Changes curses settings back in order to restore terminal state
@@ -1075,13 +1100,7 @@ class UIManager:
   
   # Calls refresh() for the InputPads for the start and end values,
   # and updates the title window
-  # TODO: This is a crime...
-  def refreshAll(self): # TODO: Wait... Don't I give each object a global_config anyways??? This is... despicable...
-    self.settingPads[0].updateValue(0)
-    self.settingPads[1].updateValue(self.global_config.start)
-    self.settingPads[3].updateValue(self.global_config.end)
-    self.settingPads[4].updateValue("Export Audio")
-    self.settingPads[5].updateValue(self.global_config.step)
+  def refreshAll(self):
     for win in self.settingPads:
       win.refresh()
       win.hideCursor()
@@ -1287,7 +1306,6 @@ class InfoDisplay:
       
 
 
-
 #Thread generating and playing audio
 class AudioPlayer:
   def __init__(self, global_config, info_update_fn = None):
@@ -1367,10 +1385,9 @@ class AudioPlayer:
   #  plt.draw()
   #  plt.pause(0.01) 
 
-  
-
+  # Runs the audio loop in the foreground
   def play(self):
-    self.audioThread(self.global_config,)
+    self.playerloop(self.global_config,)
   
   def isPausedOnException(self):
     return self.is_paused_on_error
@@ -1417,7 +1434,7 @@ class AudioPlayer:
   #      return 0
 
 
-  def audioThread(self, global_config): # The config is needed to dynamically change start/end
+  def playerloop(self, global_config): # The config is needed to dynamically change start/end
     try:
       p = pyaudio.PyAudio()
 
@@ -1508,17 +1525,18 @@ class AudioPlayer:
 
         if cont: continue
 
-        
-
-    except (KeyboardInterrupt, SystemExit):
-      pass
+    except Exception as e:
+      if isinstance(e, KeyboardInterrupt) or isinstance(e, SystemExit):
+        pass
+      else:
+        global_exception = e
+        raise e
     finally:
-      global_config.shutdown = True
       if stream is not None:
         stream.stop_stream()
         stream.close()
       p.terminate()
-      sys.stderr.write("Audio player shut down.\n")
+
         
 
 
@@ -1720,6 +1738,17 @@ class CalcWave:
     scr.keypad(False)
     curses.endwin()
 
+  # def run_external_editor(self, internal_editor):
+  #   editor_thread = threading.Thread(target = self.run_editor, args=(internal_editor,))
+
+  # # Some editor commmands, eg. vscode, do not hang until they are closed. This thread may exit immediately, or hang.
+  # # Under this assumption, this means that it will not be possible to detect when your editor is closed.
+  # def editor_thread(self, internal_editor):
+  #   tempfile.NamedTemporaryFile(suffix=".txt", delete = False)
+  #     subprocess.run([path, file], check = True, capture_output = False, stderr = subprocess.STDOUT)
+
+
+  
 
   # Runs the program with the current configuration
   def main(self):
@@ -1757,32 +1786,40 @@ class CalcWave:
       #Start the GUI input thread
       window = WindowManager(self.global_config, scr, self.global_config.evaluator.getText(), audioPlayer, exportDtype = int if self.args.int else float)
       window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
+      window.start()
       saveTimer.setTitleWidget(window.menu.title)
       audioPlayer.set_info_update_fn(window.getInfoDisplay().updateInfo)
-      audioPlayer.play() # The program hangs on this call until it is ended.
+      try:
+        audioPlayer.play() # The program hangs on this call until it is ended.
+      except Exception as e:
+        if isinstance(e, KeyboardInterrupt) or isinstance(e, SystemExit):
+          pass
+        else:
+          raise e
+      if global_exception:
+        raise global_exception
     except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly
       print("Exception caught in UI. Restored terminal state.", file=sys.stderr)
-      exc = e # Hold that thought...
+      exc = e # Hold that thought until teardown
     finally:
+      self.global_config.shutdown = True
       saveTimer.setTitleWidget(None)
       saveTimer.timerOff()
       saveTimer.save() # Save your current program
 
       if window != None:
         window.setRedirectOutput(False)
+        window.stop()
         #window.stopCursesSettings(scr)
       self.teardown_curses(scr)
 
       self.global_config.shutdown = True
-      if window:
-        window.thread.join()
-  
-      if exc:
-        raise exc
-
 
 def main(argv = None):
   CalcWave(argv).main()
+  if global_exception:
+    raise global_exception
 
 if __name__ == "__main__":
   main()
+  
