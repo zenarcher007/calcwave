@@ -5,6 +5,7 @@ import time
 import numpy as np
 import traceback
 import os
+import curses
 
 
 # A button to export audio as a WAV file, assuming you have the "wave" module installed.
@@ -22,11 +23,11 @@ class ExportButton(LineEditor, BasicMenuItem):
   def getDisplayName(self):
     return "Export Button"
   
-  def updateValue(self, text):
-    self.setText(text)
+  def updateValue(self, text, refresh = True):
+    self.setText(text, refresh = refresh)
 
   def refresh(self):
-    self.updateValue("Export Audio")
+    self.updateValue("Export Audio", refresh = False)
     super().refresh()
     
   def onBeginEdit(self):
@@ -118,10 +119,6 @@ class StartRangeMenuItem(NumericalMenuSetting):
 
   def getDisplayName(self):
     return "Start Value"
-  
-  def refresh(self):
-    self.updateValue(self.global_config.start)
-    super().refresh()
 
   # Info message definitions
   def onHoverEnter(self):
@@ -157,10 +154,6 @@ class EndRangeMenuItem(NumericalMenuSetting):
     self.global_config = global_config
     self.stepWin = None
     super().__init__(shape, name, "int")
-    
-  def refresh(self):
-    self.updateValue(self.global_config.end)
-    super().refresh()
 
   def onHoverEnter(self):
     super().onHoverEnter()
@@ -200,12 +193,8 @@ class EndRangeMenuItem(NumericalMenuSetting):
   # A special case of a NamedMenuSetting that sets the step amount in global_config
 class StepMenuItem(NumericalMenuSetting):
   def __init__(self, shape: Box, name, global_config):
-    super().__init__(shape, name, "float")
     self.global_config = global_config
-
-  def refresh(self):
-    self.updateValue(self.global_config.step)
-    super().refresh()
+    super().__init__(shape, name, "float")
 
   # Tooltip Message Definitions
   def onBeginEdit(self):
@@ -467,3 +456,38 @@ class GraphButtonMenuItem(BasicMenuItem):
     #plt.show()
     #plt.draw()
     return actionMsg
+
+
+# Title display at the top of the screen
+class TitleWindow:
+  def __init__(self, shape: Box, titlestr):
+    self.shape = shape
+    self.win = curses.newwin(shape.rowSize, shape.colSize, shape.rowStart, shape.colStart)
+    self.message = ""
+    self.titlestr = titlestr
+    self.refresh()
+    
+  # Draws the title
+  def refresh(self):
+    self.win.clear()
+    self.win.addstr(self.titlestr + self.message)
+    self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
+    #with global_display_lock:
+    curses.use_default_colors()
+    self.win.refresh()
+    
+  # Use custom text
+  def customTitle(self, text):
+    self.win.clear()
+    self.win.addstr(text + self.message)
+    self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
+    #with global_display_lock:
+    curses.use_default_colors()
+    self.win.refresh()
+
+  # Appends a mandantory message to the end of the title
+  def setMessage(self, text):
+    if text == "":
+      self.message = ""
+    else:
+      self.message = " " + text
