@@ -135,12 +135,13 @@ class LineEditor(BasicEditor):
   def getText(self):
     return ''.join(self.text)
 
-  def setText(self, text):
+  def setText(self, text, refresh = True):
     self.text = list(text)
-    self.goToBeginning()
-    self.refresh()
+    self.goToBeginning(refresh = False)
+    if refresh:
+      self.refresh()
 
-   # Scrolls left one space
+  # Scrolls left one space
   def scrollLeft(self):
     self.scrollOffset = self.scrollOffset - 1
   
@@ -170,16 +171,18 @@ class LineEditor(BasicEditor):
     return True
   
   # Goes to the beginning of the text, with the cursor at 0.
-  def goToBeginning(self):
+  def goToBeginning(self, refresh = True):
     self.setCursorPos(self.cursorPos.withCol(0))
     self.scrollOffset = 0
-    self.refresh()
+    if refresh:
+      self.refresh()
   
   # Sets the cursor at the end, and puts the scroll window in view.
-  def goToEnd(self):
+  def goToEnd(self, refresh = True):
     self.setCursorPos( self.cursorPos.withCol(min(len(self.text), self.shape.colSize-1)))
     self.scrollOffset = max(0, len(self.text) - self.shape.colSize)
-    self.refresh()
+    if refresh:
+      self.refresh()
 
   def refresh(self):
     self.win.clear()
@@ -234,8 +237,8 @@ class TextEditor(BasicEditor):
     self.win.scrollok(True) # Enable curses scrolling
     self.highlightedRanges = [] # Holds tuples with the beginning and end ranges of highlighted portions of the screen to be removed later.
 
-  def setText(self, text: str):
-    #self.win.clear()
+  def setText(self, text: str, refresh = True):
+    self.win.clear()
     self.data = [[]]
     self.cursorOffset = 0
     self.scrollOffset = 0
@@ -250,8 +253,10 @@ class TextEditor(BasicEditor):
       self.goToEol()
       if i < lineCount-1:
         self.enter()
-        self.refresh()
-    self.refresh()
+        if refresh:
+          self.refresh()
+    if refresh:
+      self.refresh()
 
 
   def getText(self):
@@ -571,7 +576,6 @@ class TextEditor(BasicEditor):
     row = self.getLineStartRow()
     visibleOffset = -min(0, row) # How much is invisible?
     lineSize = self.getLineHeight(self.dataPos.row)
-    oldCur = self.cursorPos
     for line in range(max(0, row), min(row + lineSize, self.shape.rowSize)): # Clear entire line
       self.win.move(line, 0)
       self.win.clrtoeol()
@@ -579,6 +583,7 @@ class TextEditor(BasicEditor):
     rowLen = len(self.data[self.dataPos.row])
     line = self.data[self.dataPos.row]
     self.win.addstr(''.join(line[visibleOffset*self.shape.colSize:rowLen]))
+    
     super().refresh()
   
   # Returns the absolute position of the cursor; may be displayed outside of this class
@@ -871,7 +876,7 @@ class InputPad:
     
       
   # Erases everything and sets the pad's text to text, with the cursor at the end
-  def setText(self, text):
+  def setText(self, text, refresh = True):
     maxLen = (self.shape.colSize-1) * (self.shape.rowSize)-1
     if len(text) >= maxLen:
       text = text[0:maxLen-1]
@@ -882,7 +887,8 @@ class InputPad:
     #self.curPos(self.boxY1+int(column / xWidth, self.boxX1+(column % xWidth)))
     self.curPos(int(column / xWidth), column % xWidth)
     
-    self.win.refresh()
+    if refresh:
+      self.win.refresh()
                 
   
   # Does the equivalent of a backspace. Includes workarounds for the many bugs it had...
