@@ -53,7 +53,7 @@ class BasicMenuItem:
   def onHoverEnter(self):
     for row in range(0, self.shape.rowSize):
       self.win.chgat(0, row, self.shape.colSize, curses.A_REVERSE)
-    curses.use_default_colors()
+    #curses.use_default_colors()
     #with global_display_lock:
     self.win.refresh()
     return "Hover Message"

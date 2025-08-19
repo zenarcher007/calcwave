@@ -357,7 +357,7 @@ class ProgressBar(BasicMenuItem):
   def updateIndex(self, i, start, end):
     i = max(i, min(i, end))
     maxLen = self.shape.colSize * self.shape.rowSize
-    value = int(np.interp(i, [start,end], [0, maxLen - 2]))
+    value = int(np.interp(i, [start,end], [0, maxLen - 3]))
     
     text = "{" + ''.join([char*value for char in '░' ]) + ''.join([' '*(maxLen-value-3)]) + '}'
     

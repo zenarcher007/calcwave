@@ -238,8 +238,9 @@ class TextEditor(BasicEditor):
     self.highlightedRanges = [] # Holds tuples with the beginning and end ranges of highlighted portions of the screen to be removed later.
 
   def setText(self, text: str, refresh = True):
+    self.win.move(0,0)
     self.win.clear()
-    self.data = [[]]
+    self.data = []
     self.cursorOffset = 0
     self.scrollOffset = 0
     self.lineOffset = 0
@@ -247,14 +248,17 @@ class TextEditor(BasicEditor):
     self.dataPos = Point(0,0)
     byLine = text.split('\n')
     lineCount = len(byLine)
+    row = 0
     for i, line in enumerate(byLine):
-      self.data[i] = list(line)
-      self.dataPos = Point(row = i, col = 0)
-      self.goToEol()
-      if i < lineCount-1:
-        self.enter()
-        if refresh:
-          self.refresh()
+      self.data.append(list(line))
+      
+      if row < self.shape.rowSize-1:
+        self.win.addstr(line)
+        row = row + self.getLineHeight(i)
+        self.win.move(row, 0)
+        
+    self.goToEolV2()
+    self.showCursor()
     if refresh:
       self.refresh()
 
@@ -583,7 +587,6 @@ class TextEditor(BasicEditor):
     rowLen = len(self.data[self.dataPos.row])
     line = self.data[self.dataPos.row]
     self.win.addstr(''.join(line[visibleOffset*self.shape.colSize:rowLen]))
-    
     super().refresh()
   
   # Returns the absolute position of the cursor; may be displayed outside of this class

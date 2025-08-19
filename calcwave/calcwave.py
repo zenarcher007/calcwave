@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-version = "1.6.4"
+version = "1.6.5"
 
 
 # Copyright (C) 2021 by: Justin Douty (jdouty03 at gmail dot com)
@@ -1115,7 +1115,6 @@ class AudioPlayer:
               self.nextStart = iter.curr # Pick up where you left off this time
               break
           
-          
           ### Update the graph
           if self.graph is not None:
             timenow = time.time()
@@ -1149,8 +1148,7 @@ class AudioPlayer:
               plt.pause(0.001)
     
     
-
-        if cont: continue
+          if cont: continue
 
     except Exception as e:
       if isinstance(e, KeyboardInterrupt) or isinstance(e, SystemExit):
