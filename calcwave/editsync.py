@@ -5,9 +5,10 @@ import contextlib
 
 # Creates a temp file containing the editor text, watches it for changes, and updates the editor text.
 class FileWatchAndSync(FileSystemEventHandler):
-  def __init__(self, editor, windowmanager, lock) -> None:
+  def __init__(self, editor, windowmanager, infoDisplay, lock) -> None:
     self.editor = editor
     self.window = windowmanager
+    self.infoDisplay = infoDisplay
     self.lock = lock
     super().__init__()
 
@@ -24,4 +25,5 @@ class FileWatchAndSync(FileSystemEventHandler):
         self.editor.hideCursor()
         self.editor.setText(text)
     if text:
+      self.infoDisplay.updateInfo("File read")
       self.window.try_compile_code(text)

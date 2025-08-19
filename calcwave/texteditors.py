@@ -236,6 +236,7 @@ class TextEditor(BasicEditor):
     self.lineOffset = 0 # For reference when the cursor wraps to the next line
     self.win.scrollok(True) # Enable curses scrolling
     self.highlightedRanges = [] # Holds tuples with the beginning and end ranges of highlighted portions of the screen to be removed later.
+    self.readonly = False
 
   def setText(self, text: str, refresh = True):
     self.win.move(0,0)
@@ -358,6 +359,7 @@ class TextEditor(BasicEditor):
     pos = min(lineSize, orient) if ifPast else lineSize
     self.dataPos = self.dataPos.withCol(pos)
     self.setCursorPos(self.cursorPos.withCol(pos))
+
   
   # "Safer" version of goToEol
   def goToEolV2(self):
@@ -653,12 +655,15 @@ class TextEditor(BasicEditor):
          self.slideData(1)
       else:
         retVal = False
-    elif key == curses.KEY_ENTER:
-      retVal = self.enter()
-    elif key == curses.KEY_BACKSPACE:
-      retVal = self.backspace()
+    elif not self.readonly:
+      if key == curses.KEY_ENTER:
+        retVal = self.enter()
+      elif key == curses.KEY_BACKSPACE:
+        retVal = self.backspace()
+      else:
+        self.insertChar(chr(key))
     else:
-      self.insertChar(chr(key))
+      pass
     self.refresh()
     return retVal
   

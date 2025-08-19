@@ -188,7 +188,7 @@ class MemoryClassCompiler:
     self._reSET = set() # A set used for converting the reset() operation for resetting function call counts into O(1) time
 
 
-  def run(self, fn_name, class_initializer, *args, **kwargs):
+  def run(self, fn_name, class_initializer, *args, extra_vars = {}, **kwargs):
     # Handle pseudo-resetting all func_count values to 0
     if not fn_name in self._reSET:
       self._func_count[fn_name] = 0
@@ -200,7 +200,7 @@ class MemoryClassCompiler:
     # Create new instance of memory class for each greater number of calls of the function in user code
     count = self._func_count[fn_name]
     if count > len(ilist)-1:
-      self._instances[fn_name].append(class_initializer())
+      self._instances[fn_name].append(class_initializer(extra_vars))
     clazz = self._instances[fn_name][count]
     self._func_count[fn_name] += 1 # Increment to next instance
     
@@ -212,11 +212,11 @@ class MemoryClassCompiler:
     self._reSET = set()
 
   # Adds mappings from each desired function name to a function that calls from a list of instances of each respective class
-  def compile(self):
+  def compile(self, extra_vars = {}):
     for memoryClass in mathextensions.getMemoryClasses():
       fn_name = memoryClass.__callname__()
       # https://stackoverflow.com/a/21054384
-      fncreate = lambda fn, mc: lambda *args, **kwargs: self.run(fn, mc, *args, **kwargs)
+      fncreate = lambda fn, mc, extra_vars = extra_vars: lambda *args, **kwargs: self.run(fn, mc, extra_vars = extra_vars, *args, **kwargs)
       self.functionTable[fn_name] = fncreate(fn_name, memoryClass)
       self._func_count[fn_name] = 0
       self._instances[fn_name] = []
@@ -230,7 +230,7 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, symbolTable = vars(math), channels = 1, audio_map = {}):
+  def __init__(self, text, rate = 44100, symbolTable = vars(math), channels = 1, audio_map = {}):
     self.text = text
     self.symbolTable = symbolTable.copy()
 
@@ -248,7 +248,7 @@ class Evaluator:
     self.symbolTable.update(mathextensions.getFunctionTable())
 
     self.memory_class = MemoryClassCompiler()
-    self.memory_class.compile()
+    self.memory_class.compile(extra_vars = {"rate": rate})
     self.symbolTable.update(self.memory_class.getFunctionTable())
 
     self.prog = compile(text, '<string>', 'exec', optimize=2)
@@ -380,7 +380,7 @@ class WindowManager:
 
   def try_compile_code(self, text):
     try:
-      evaluator = Evaluator(text, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels) # Compile on-screen code
+      evaluator = Evaluator(text, rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels) # Compile on-screen code
       with self.global_config.lock:
         self.global_config.evaluator = evaluator # Install newly compiled code
         self.global_config.SaveTimer.notify()
@@ -1207,7 +1207,7 @@ class CalcWave:
   
   def _setup(self, argv):
     if self.global_config.evaluator is None:
-      self.global_config.evaluator = Evaluator(self.get_default_prog(), channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
+      self.global_config.evaluator = Evaluator(self.get_default_prog(), rate = self.global_config.rate, channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
   
@@ -1308,7 +1308,7 @@ class CalcWave:
       self.global_config.rate = dict['rate']
     self.global_config.SaveTimer = self
     
-    self.global_config.evaluator = Evaluator(dict['expr'], audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
+    self.global_config.evaluator = Evaluator(dict['expr'], rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
     return self.global_config
   
 
@@ -1367,12 +1367,12 @@ class CalcWave:
 
   # Some editor commmands, eg. vscode, do not hang until they are closed. This thread may exit immediately, or hang.
   # Under this assumption, this means that it will not be possible to detect when your editor is closed.
-  def run_external_editor(self, external_editor, internal_editor, initial_text, windowmanager: WindowManager, lock, output_fd):
+  def run_external_editor(self, external_editor, internal_editor, initial_text, windowmanager: WindowManager, infoDisplay: InfoDisplay, lock, output_fd):
     temp = tempfile.NamedTemporaryFile(suffix=".txt", delete = False)
     with open(temp.name, 'w') as file:
       file.write(initial_text)
     proc = subprocess.Popen(shlex.split(external_editor) + [temp.name], stderr=output_fd, stdout=output_fd)
-    watcher = FileWatchAndSync(internal_editor, windowmanager, lock = lock)
+    watcher = FileWatchAndSync(internal_editor, windowmanager, infoDisplay, lock = lock)
     observer = PollingObserver()
     observer.schedule(watcher, path = temp.name, recursive = False)
     observer.start()
@@ -1433,7 +1433,10 @@ class CalcWave:
       saveTimer.setTitleWidget(window.menu.title)
       audioPlayer.set_info_update_fn(infoDisplay.updateInfo)
       if self.args.editor:
-        editor_process, observer = self.run_external_editor(external_editor = self.args.editor, internal_editor = window.editor, initial_text = self.global_config.evaluator.getText(), windowmanager = window, lock = global_display_lock, output_fd = infoDisplay.getWriteFD())
+        window.menu.title.addPermanentMessage("(Readonly)")
+        window.menu.title.refresh()
+        editor.readonly = True
+        editor_process, observer = self.run_external_editor(external_editor = self.args.editor, internal_editor = window.editor, initial_text = self.global_config.evaluator.getText(), windowmanager = window, lock = global_display_lock, infoDisplay = infoDisplay, output_fd = infoDisplay.getWriteFD())
       audioPlayer.play() # This runs on the main thread. The program hangs on this call until it is ended.
       
     except Exception as e: # Catch any exception so that the state of the terminal can be restored correctly

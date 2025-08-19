@@ -466,12 +466,13 @@ class TitleWindow:
     self.win = curses.newwin(shape.rowSize, shape.colSize, shape.rowStart, shape.colStart)
     self.message = ""
     self.titlestr = titlestr
-    self.refresh()
+    self.perm_messages = []
     
   # Draws the title
   def refresh(self):
     self.win.clear()
-    self.win.addstr(self.titlestr + self.message)
+    permmsg = ('' if self.perm_messages == [] else ' ') + ' '.join(self.perm_messages)
+    self.win.addstr(self.titlestr + self.message + permmsg)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
     #with global_display_lock:
     curses.use_default_colors()
@@ -482,13 +483,15 @@ class TitleWindow:
     self.win.clear()
     self.win.addstr(text + self.message)
     self.win.chgat(0, 0, self.shape.colSize, curses.A_REVERSE)
-    #with global_display_lock:
-    curses.use_default_colors()
-    self.win.refresh()
 
-  # Appends a mandantory message to the end of the title
+  # Sets a message to the end of the title
   def setMessage(self, text):
-    if text == "":
-      self.message = ""
+    noPermMsg = self.perm_messages == []
+    if text == "" and noPermMsg:
+      self.message = ''
     else:
       self.message = " " + text
+  
+  # Adds a permanent message to the title
+  def addPermanentMessage(self, text):
+    self.perm_messages.append(text)

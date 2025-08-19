@@ -7,16 +7,64 @@ from numpy import linalg
 tri = lambda t: (2*(t%(2*math.pi)))/(2*math.pi)-1
 saw = lambda t: 2*abs(tri(t))-1
 sqr = lambda t: 1.0 if math.sin(t) > 0 else -1.0
-
-def rand():
-  return random.random() * 2 - 1
-
 def avg(x):
   return sum(x) / len(x)
 
-class Integral:
+# Base class for memory classes
+class MemoryClass:
+  # Any variables added for all MemoryClasses when compiled with the MemoryClassCompiler will be passed here as a dictionary
+  def __init__(self, vars: dict):
+    pass
+
+  # This function will be called by the Evaluator. It must be called "evaluate", and can take any number of arguments,
+  # which will be provided by the user.
+  def evaluate(self):
+    pass
+
+  # This is the function name the user will literally type in the interpereter, specifying the arguments within "evaluate"
+  @staticmethod
+  def __callname__():
+    "MemoryClass"
+
+# A tone generator of a constant frequency. The step parameter will not affect this.
+class Frequency(MemoryClass):
+  def __init__(self, vars: dict):
+    self.rate = vars.get("rate", 44100)
+    self.phase = 0.0  # keep track of running phase
+  
+  def evaluate(self, hz, fn=math.sin):
+    # increment phase by correct amount per sample
+    self.phase += 2 * math.pi * hz / self.rate
+    # wrap phase to avoid float overflow
+    if self.phase > 2 * math.pi:
+      self.phase -= 2 * math.pi
+    return fn(self.phase)
+
+  @staticmethod
+  def __callname__():
+    return "freq"
+
+
+# A memory class that returns a new random number every n steps
+class Random(MemoryClass):
+  def __init__(self, vars: dict):
+    self.steps = 1
+    self.num = random.random() * 2 - 1
+  
+  def evaluate(self, n = 1):
+    self.steps = self.steps + 1
+    if self.steps > n:
+      self.steps = 1
+      self.num = random.random() * 2 - 1
+    return self.num
+  
+  @staticmethod
+  def __callname__():
+    return "rand"
+  
+class Integral(MemoryClass):
   # __init__ must take no arguments
-  def __init__(self):
+  def __init__(self, vars: dict):
     self.prevY = 0
 
   # This function will be called by the Evaluator. It must be called "evaluate", and can take any number of arguments,
@@ -42,8 +90,8 @@ class Integral:
   #  return {"itgl": self.itgl}
 
 
-class Derivative:
-  def __init__(self):
+class Derivative(MemoryClass):
+  def __init__(self, vars: dict):
     self.prevY = 0
 
   def evaluate(self, y, clip = True):
@@ -62,8 +110,8 @@ class Derivative:
   
 
 
-class ExponentialMovingAverage:
-  def __init__(self):
+class ExponentialMovingAverage(MemoryClass):
+  def __init__(self, vars: dict):
     self.prevY = 0
 
   def evaluate(self, y, n):
@@ -80,10 +128,11 @@ class ExponentialMovingAverage:
 # A cache to avoid recomputing values that are known to not change.
 # This can greatly improve performance for user-defined values that would be
 # Recomputed at every iteration. This will update at every recompilation.
-class Constant:
-  def __init__(self):
+class Constant(MemoryClass):
+  def __init__(self, vars: dict):
     self._initialized = False
     self.cachedY = None
+    self.vars = {}
 
   # Y should be any lambda that returns a value and takes no arguments
   def evaluate(self, y):
@@ -97,8 +146,8 @@ class Constant:
     return "const"
 
 # A memistic convolution over the last number of values
-class Convolution:
-  def __init__(self):
+class Convolution(MemoryClass):
+  def __init__(self, vars: dict):
     self.length = 0
     self.history = deque(maxlen = self.length)
 
@@ -126,25 +175,20 @@ class Convolution:
 # Example:
 # r = range(5)
 # print(r.start, r.stop, r.__iter__().step) # prints "0 5 1"
-class Mask:
-  def __init__(self):
-    pass
-  
-  def evaluate(self, y, range):
-    pass
-    # Return y if 
-  
+
+
+
 # A simple history, that returns a deque of the last [length] values. You may want to convert this into a list.
-class History:
-  def __init__(self):
-    self.length = 0
+class History(MemoryClass):
+  def __init__(self, vars: dict):
     self.history = None
     self.initalized = False
 
   def evaluate(self, y, length):
     if self.initalized == False:
       self.initalized = True
-      self.history = deque(maxlen = self.length)
+      self.history = deque(maxlen = length)
+      self.history.extend(0.0 for _ in range(length))
     self.history.append(y)
     return self.history
  
@@ -153,7 +197,7 @@ class History:
     return "history"
     
 class Delay:
-  def __init__(self):
+  def __init__(self, vars: dict):
     self.history = None
     self.initalized = False
     self.length = 0
@@ -203,7 +247,7 @@ class Delay:
 #       It might be a good idea to compile this into a C module
 #       ... or wait until Numba supports deque
 class Normalize:
-  def __init__(self):
+  def __init__(self, vars: dict):
     self.length = 0
     self.history = None
     self.initalized = False
@@ -270,12 +314,11 @@ class Normalize:
 # Any calls to functions mapped within their getFunctionTable() will be mapped to a unique
 # instance of that class.
 def getMemoryClasses():
-  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize, Delay]
+  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize, Delay, Random, Frequency]
 
 # During compilation, a mapping of functions (not using the memory system) available to the user
 def getFunctionTable():
   return {"tri": tri,
           "saw": saw,
           "sqr": sqr,
-          "rand": rand,
           "avg": avg}
