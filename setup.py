@@ -15,6 +15,8 @@ setup(
     'numpy>=1.23',
     'argparse',
     'windows-curses ; platform_system=="Windows"',
+    'matplotlib',
+    'watchdog'
   ],
   entry_points={
     'console_scripts': [

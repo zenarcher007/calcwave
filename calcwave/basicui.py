@@ -46,7 +46,7 @@ class BasicMenuItem:
     return False # By default, this item can enter and exit focus, rather than immediately exiting.
 
   # Redraws the button graphics (text, background, etc.)
-  def updateValue(self, value):
+  def updateValue(self, value, refresh = refresh):
     pass # This is a hook
    
   # Called when UIManager has the cursor over your item
@@ -105,8 +105,8 @@ class NamedMenuSetting(LineEditor, BasicMenuItem): # Extend the InputPad and Bas
     self.hideCursor()
     #self.refresh()
   
-  def updateValue(self, value):
-    self.setText(self.name + "=" + str(value))
+  def updateValue(self, value, refresh = True):
+    self.setText(self.name + "=" + str(value), refresh = refresh)
     self.lastValue = value
   
   # Updates the last value first in order to leave the cursor in the right position

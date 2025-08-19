@@ -354,7 +354,8 @@ class ProgressBar(BasicMenuItem):
       self.infoDisplay.updateInfo("Exception at x=" + str(i) + ": " + type(e).__name__ + ": " + str(e))
 
   # Displays the current x-value as a progress bar
-  def updateIndex(self, i, start, end):  
+  def updateIndex(self, i, start, end):
+    i = max(i, min(i, end))
     maxLen = self.shape.colSize * self.shape.rowSize
     value = int(np.interp(i, [start,end], [0, maxLen - 2]))
     
