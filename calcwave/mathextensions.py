@@ -7,13 +7,16 @@ from numpy import linalg
 tri = lambda t: (2*(t%(2*math.pi)))/(2*math.pi)-1
 saw = lambda t: 2*abs(tri(t))-1
 sqr = lambda t: 1.0 if math.sin(t) > 0 else -1.0
-def avg(x):
-  return sum(x) / len(x)
+clamp = lambda t, lower, upper: max(lower, min(t, upper))
+crossfade = lambda c, a, b: a * (0.5 - c * 0.5) + b * (0.5 + c * 0.5)
+avg = lambda t: sum(t) / len(t)
+
 
 # Base class for memory classes
 class MemoryClass:
   # Any variables added for all MemoryClasses when compiled with the MemoryClassCompiler will be passed here as a dictionary
   def __init__(self, vars: dict):
+    # This will be called once per compilation (after every time the code is changed)
     pass
 
   # This function will be called by the Evaluator. It must be called "evaluate", and can take any number of arguments,
@@ -321,4 +324,6 @@ def getFunctionTable():
   return {"tri": tri,
           "saw": saw,
           "sqr": sqr,
-          "avg": avg}
+          "avg": avg,
+          "clamp": clamp,
+          "crossfade": crossfade}

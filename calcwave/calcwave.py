@@ -1368,7 +1368,7 @@ class CalcWave:
   # Some editor commmands, eg. vscode, do not hang until they are closed. This thread may exit immediately, or hang.
   # Under this assumption, this means that it will not be possible to detect when your editor is closed.
   def run_external_editor(self, external_editor, internal_editor, initial_text, windowmanager: WindowManager, infoDisplay: InfoDisplay, lock, output_fd):
-    temp = tempfile.NamedTemporaryFile(suffix=".txt", delete = False)
+    temp = tempfile.NamedTemporaryFile(suffix=".py", delete = False)
     with open(temp.name, 'w') as file:
       file.write(initial_text)
     proc = subprocess.Popen(shlex.split(external_editor) + [temp.name], stderr=output_fd, stdout=output_fd)

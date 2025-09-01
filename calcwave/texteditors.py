@@ -253,9 +253,9 @@ class TextEditor(BasicEditor):
     for i, line in enumerate(byLine):
       self.data.append(list(line))
       
+      row = row + self.getLineHeight(i)
       if row < self.shape.rowSize-1:
         self.win.addstr(line)
-        row = row + self.getLineHeight(i)
         self.win.move(row, 0)
         
     self.goToEolV2()

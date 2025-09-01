@@ -16,7 +16,8 @@ setup(
     'argparse',
     'windows-curses ; platform_system=="Windows"',
     'matplotlib',
-    'watchdog'
+    'watchdog',
+    'soundfile'
   ],
   entry_points={
     'console_scripts': [
