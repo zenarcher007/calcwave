@@ -1,0 +1,1 @@
+{"start": 0, "end": 1000000, "step": 1.0, "rate": 44100, "channels": 2, "frameSize": 1024, "expr": "phaser = lambda frq, rnge: freq(frq+ema(intg(rand(5000))*rnge,3000), fn=tri)\n\np1 = phaser(200,10)\np2 = phaser(300,20)\np3 = phaser(400,30)\np4 = phaser(520,37)\np5 = phaser(780,60)\n\nout[:] = tanh(p1+p2+p3+p4+p5)"}
