@@ -135,10 +135,6 @@ class SaveTimer:
   
   # Saves to the file
   def save(self):
-    if not hasattr(self.windowmanager, 'last_working_code'):
-      print("MOOOOOOOOOOOO")
-    if self.windowmanager.last_working_code is None:
-      print("MOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
     if not hasattr(self.windowmanager, 'last_working_code') or self.windowmanager.last_working_code is None:
       return
     dict = {"start": self.global_config.start,
@@ -1227,7 +1223,7 @@ class CalcWave:
   def _setup(self, argv):
     if self.global_config.evaluator is None:
       evl = Evaluator(rate = self.global_config.rate, channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
-      evl.compile(self.get_default_prog)
+      evl.compile(self.get_default_prog())
       self.global_config.evaluator = evl
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
