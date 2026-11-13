@@ -50,9 +50,9 @@ Optionally, you may also use Calcwave in terminal mode, or specify extra options
 <br/>  
 
 #### TODO:  
-* Waveform graphing
-* Make the text input class allow scrolling past its bounds on the screen
+* Waveform graphing - done
+* Make the text input class allow scrolling past its bounds on the screen - done
 * Substitution rule-based syntax for expression
-    * Add a full text editor (which allows newlines) below the main expression
-* Saving and loading sessions
+    * Add a full text editor (which allows newlines) below the main expression - done
+* Saving and loading sessions - done
 * Python binary detection in DependencyWizard
