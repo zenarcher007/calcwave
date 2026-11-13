@@ -185,7 +185,7 @@ class Config:
 
     self.lock = threading.Lock()
 
-    
+
   
 class MemoryClassCompiler:
   def __init__(self):
@@ -242,6 +242,7 @@ class Evaluator:
     self.rate = rate
     self.channels = channels
     self.symbolTable = symbolTable.copy()
+    self.memory_class = MemoryClassCompiler()
 
     self.audio_map = audio_map
     #symbolTable['log'] = None
@@ -256,11 +257,13 @@ class Evaluator:
 
     self.symbolTable.update(mathextensions.getFunctionTable())
 
+
+
   def compile(self, text):
-    self.memory_class = MemoryClassCompiler()
     self.memory_class.compile(extra_vars = {"rate": self.rate})
     self.symbolTable.update(self.memory_class.getFunctionTable())
     self.prog = compile(text, '<string>', 'exec', optimize=2)
+
 
   ### A custom Evaluator function that loads and adds audio to the audio_map. This will be available globally in the syntax
   def load(self, path, alias):
