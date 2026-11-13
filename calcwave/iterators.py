@@ -1,5 +1,6 @@
 import numpy as np
 import itertools
+import mmh3
 
   # A simple iterator that calls func from start to end over step.
   # Sort of like Python range(), but can work with any number, including floats

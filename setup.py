@@ -17,7 +17,8 @@ setup(
     'windows-curses ; platform_system=="Windows"',
     'matplotlib',
     'watchdog',
-    'soundfile'
+    'soundfile',
+    'mmh3'
   ],
   entry_points={
     'console_scripts': [

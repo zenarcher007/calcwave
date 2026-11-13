@@ -61,8 +61,8 @@ global_display_lock = threading.Lock()
 global global_exception
 global_exception = None
 
-# This is necessary because some systems I tested on seemed to have inaccurate curses default key bindings
-# (eg. enter, escape, backspace wouldn't type the correct character), which is odd...
+# This is necessary because some 'systems I tested on seemed to have inaccurate curses default key bindings
+# (eg. enter, escape, backspace wouldnt type the correct character), which is odd...
 detect_os_monkeypatch_curses_keybindings(curses_module = curses)
 
 # Supress SyntaxWarning from Math module
@@ -83,10 +83,11 @@ if "win" in sys.platform:
 
 # Checks every "delay" seconds, and saves to a file if flag has been set
 class SaveTimer:
-  def __init__(self, delay, filepath, Config):
+  def __init__(self, delay, filepath, windowmanager, Config):
     self.delay = delay
     self.filepath = filepath
     self.pendingsave = False
+    self.windowmanager = windowmanager
     self.global_config = Config
     self.thread = None
     self.timerstate = False
@@ -134,13 +135,19 @@ class SaveTimer:
   
   # Saves to the file
   def save(self):
+    if not hasattr(self.windowmanager, 'last_working_code'):
+      print("MOOOOOOOOOOOO")
+    if self.windowmanager.last_working_code is None:
+      print("MOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO")
+    if not hasattr(self.windowmanager, 'last_working_code') or self.windowmanager.last_working_code is None:
+      return
     dict = {"start": self.global_config.start,
             "end": self.global_config.end,
             "step": self.global_config.step,
             "rate": self.global_config.rate,
             "channels": self.global_config.channels,
             "frameSize": self.global_config.frameSize,
-            "expr": self.global_config.evaluator.getText()
+            "expr": self.windowmanager.last_working_code
             }
     
     id = str(random.randint(1000,9999))
@@ -230,8 +237,10 @@ class MemoryClassCompiler:
 # Compiles the given code ("text") upon construction, and throws any errors it produces
 class Evaluator:
   # Lightweight constructor that then immediately compiles text - a new instance is created for every version of the expression
-  def __init__(self, text, rate = 44100, symbolTable = vars(math), channels = 1, audio_map = {}):
-    self.text = text
+  def __init__(self, rate = 44100, symbolTable = vars(math), channels = 1, audio_map = {}):
+    #self.text = None # Will be set upon compile()
+    self.rate = rate
+    self.channels = channels
     self.symbolTable = symbolTable.copy()
 
     self.audio_map = audio_map
@@ -247,10 +256,10 @@ class Evaluator:
 
     self.symbolTable.update(mathextensions.getFunctionTable())
 
+  def compile(self, text):
     self.memory_class = MemoryClassCompiler()
-    self.memory_class.compile(extra_vars = {"rate": rate})
+    self.memory_class.compile(extra_vars = {"rate": self.rate})
     self.symbolTable.update(self.memory_class.getFunctionTable())
-
     self.prog = compile(text, '<string>', 'exec', optimize=2)
 
   ### A custom Evaluator function that loads and adds audio to the audio_map. This will be available globally in the syntax
@@ -329,6 +338,7 @@ class Evaluator:
 # (based on booleans recieved by each of the two indicating whether those keypresses were handled or not).
 class WindowManager:
   def __init__(self, global_config, scr, initialExpr, audioClass, editor, infoDisplay, exportDtype = int):
+    self.last_working_code = None
     self.global_config = global_config
     self.scr = scr
     self.audioClass = audioClass
@@ -380,9 +390,13 @@ class WindowManager:
 
   def try_compile_code(self, text):
     try:
-      evaluator = Evaluator(text, rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels) # Compile on-screen code
+      evaluator = Evaluator(rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels) # Compile on-screen code
+      evaluator.compile(text)
       with self.global_config.lock:
-        self.global_config.evaluator = evaluator # Install newly compiled code
+        self.last_working_code = text
+        #self.global_config.evaluator <<= evaluator # Call shift operator
+        #self.global_config.evaluator = evaluator # Install new evaluator
+        self.global_config.evaluator.compile(text)
         self.global_config.SaveTimer.notify()
         self.global_config.updateAudio = True
         if self.audioClass.isPausedOnException():
@@ -1078,6 +1092,7 @@ class AudioPlayer:
       with global_config.lock:
         start, end, step, evaluator = (global_config.start, global_config.end, global_config.step, global_config.evaluator)
       graphtimer = time.time()
+      cached_chunks = []
       while global_config.shutdown == False:
 
         while self.paused == True:
@@ -1198,8 +1213,9 @@ class CalcWave:
     self.rate_is_default = False
     self.global_config.channels = self.args.channels
     self.global_config.frameSize = self.args.buffer
+    self.initial_program = self.get_default_prog()
     if self.priorProjectExists:
-      self.loadProject(self.args.file) # Populates or updates config with additional project data
+      self.initial_program = self.loadProject(self.args.file) # Populates or updates config with additional project data
 
     # Runs further program setup, makes modifications to self.global_config based on arguments and self.args.
     # This function may exit the program here.
@@ -1207,7 +1223,9 @@ class CalcWave:
   
   def _setup(self, argv):
     if self.global_config.evaluator is None:
-      self.global_config.evaluator = Evaluator(self.get_default_prog(), rate = self.global_config.rate, channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
+      evl = Evaluator(rate = self.global_config.rate, channels = self.global_config.channels, audio_map = self.global_config.AUDIO_MAP)
+      evl.compile(self.get_default_prog)
+      self.global_config.evaluator = evl
     ### There is guaranteed to be a self.global_config.evaluator past this point ###
 
   
@@ -1285,7 +1303,7 @@ class CalcWave:
     return args
 
 
-  # Loads the CalcWave project from the file, updating self.global_config.
+  # Loads the CalcWave project from the file, updating self.global_config and returning the loaded program text
   def loadProject(self, file):
     #t = Config()
     dict = None
@@ -1295,6 +1313,8 @@ class CalcWave:
     self.global_config.end = dict['end']
     self.global_config.step = dict['step']
     self.global_config.rate = dict['rate']
+    if not dict['expr']:
+      dict['expr'] = self.get_default_prog()
     if self.args.output_device:
       if self.args.output_device != -1:
         self.global_config.output_device_index = self.args.output_device
@@ -1307,9 +1327,11 @@ class CalcWave:
     if self.rate_is_default == True:
       self.global_config.rate = dict['rate']
     self.global_config.SaveTimer = self
-    
-    self.global_config.evaluator = Evaluator(dict['expr'], rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
-    return self.global_config
+
+    evl = Evaluator(rate = self.global_config.rate, audio_map = self.global_config.AUDIO_MAP, channels = self.global_config.channels)
+    evl.compile(dict['expr'])
+    self.global_config.evaluator = evl
+    return dict['expr']
   
 
     #return audioarr
@@ -1338,8 +1360,8 @@ class CalcWave:
   # This will also:
   # * Populate global_config.AUDIO_MAP if audio files are to be loaded.
   # * 
-  def create_save_timer(self, filepath):
-    saveTimer = SaveTimer(2, filepath, self.global_config) # Save every 2 seconds if changes are present
+  def create_save_timer(self, filepath, windowmanager):
+    saveTimer = SaveTimer(2, filepath, windowmanager, self.global_config) # Save every 2 seconds if changes are present
     self.global_config.SaveTimer = saveTimer # this exists in the config so it can be notified of changes
     saveTimer.timerOn() # Start autosave timer
     return saveTimer
@@ -1409,7 +1431,6 @@ class CalcWave:
       exportAudio(exportPath, self.global_config, None, None, dtype = int if self.args.int else float)
       sys.exit(0)
     
-    saveTimer = self.create_save_timer(apath)
     audioPlayer = self.create_audio_player()
 
     window = None
@@ -1427,9 +1448,11 @@ class CalcWave:
       self.global_config.output_fd = infoDisplay.getWriteFD()
 
       #Start the WindowManager thread, which handles typing and error checking
-      window = WindowManager(self.global_config, scr, self.global_config.evaluator.getText(), audioPlayer, editor, infoDisplay, exportDtype = int if self.args.int else float)
+      window = WindowManager(self.global_config, scr, self.initial_program, audioPlayer, editor, infoDisplay, exportDtype = int if self.args.int else float)
+      self.initial_program = None
       window.setRedirectOutput(True) # Redirect all output to the InfoDisplay
       window.start()
+      saveTimer = self.create_save_timer(apath, window)
       saveTimer.setTitleWidget(window.menu.title)
       audioPlayer.set_info_update_fn(infoDisplay.updateInfo)
       if self.args.editor:

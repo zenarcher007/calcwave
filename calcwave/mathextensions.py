@@ -148,6 +148,26 @@ class Constant(MemoryClass):
   def __callname__():
     return "const"
 
+# Treats every new computed value as a constant - i.e. maps every y value
+# to a computed value from the passed string. Uses memmory but can prevent recomputing expensive computations.
+# According to CalcWave code, this is usually reinitialized upon code change.
+class KeyCache(MemoryClass):
+  def __init__(self, vars:dict):
+    self.cache = {}
+
+  # Accepts key, which could be a value of x, and y, a lambda with no arguments.
+  def evaluate(self, key, y):
+    if key in self.cache:
+      return self.cache[key]
+    else:
+      self.cache[key] = y()
+      return self.cache[key]
+
+  @staticmethod
+  def __callname__():
+    return "keycache"
+
+
 # A memistic convolution over the last number of values
 class Convolution(MemoryClass):
   def __init__(self, vars: dict):
@@ -317,7 +337,7 @@ class Normalize:
 # Any calls to functions mapped within their getFunctionTable() will be mapped to a unique
 # instance of that class.
 def getMemoryClasses():
-  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize, Delay, Random, Frequency]
+  return [Integral, Derivative, ExponentialMovingAverage, Convolution, Constant, History, Normalize, Delay, Random, Frequency, KeyCache]
 
 # During compilation, a mapping of functions (not using the memory system) available to the user
 def getFunctionTable():
